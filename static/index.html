@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Публичная кадастровая карта Республики Беларусь — ГИС Здания и Организации</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+    <div id="app-layout">
+        <!-- Верхняя навигационная панель ГИС -->
+        <header class="gis-header">
+            <div class="brand-block">
+                <div class="brand-emblem" title="Кадастровая карта Республики Беларусь">РБ</div>
+                <div class="brand-titles">
+                    <h1>Кадастровая карта Республики Беларусь</h1>
+                    <span class="brand-subtitle">Единый реестр зданий, земельных участков и организаций (OpenGIS / PostGIS MVT)</span>
+                </div>
+            </div>
+
+            <!-- Универсальный поиск -->
+            <div class="search-container">
+                <div class="search-input-wrap">
+                    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input
+                        id="global-search-input"
+                        type="text"
+                        placeholder="Поиск по кадастровому №, адресу, названию здания, организации или УНП..."
+                        autocomplete="off"
+                    />
+                    <button id="search-clear-btn" class="icon-btn hidden" title="Очистить поиск">✕</button>
+                </div>
+                <div id="search-results-dropdown" class="search-dropdown hidden"></div>
+            </div>
+
+            <!-- Сводная статистика в шапке -->
+            <div class="stats-bar" id="header-stats">
+                <div class="stat-pill">
+                    <span class="stat-label">Участков:</span>
+                    <strong id="stat-parcels">—</strong>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">Зданий:</span>
+                    <strong id="stat-buildings">—</strong>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">Организаций:</span>
+                    <strong id="stat-orgs">—</strong>
+                </div>
+            </div>
+        </header>
+
+        <!-- Панель быстрого перехода по регионам и областным центрам РБ -->
+        <div class="regions-toolbar">
+            <div class="regions-group">
+                <span class="toolbar-label">Регионы РБ:</span>
+                <button class="city-btn active" data-lat="53.7098" data-lon="27.9534" data-zoom="6.6" data-pitch="0">Вся Беларусь</button>
+                <button class="city-btn" data-lat="53.9045" data-lon="27.5615" data-zoom="13.2" data-pitch="45" data-city="Минск">Минск</button>
+                <button class="city-btn" data-lat="52.0856" data-lon="23.6916" data-zoom="15.2" data-pitch="45" data-city="Брест">Брест</button>
+                <button class="city-btn" data-lat="53.6502" data-lon="23.8548" data-zoom="15.2" data-pitch="45" data-city="Гродно">Гродно</button>
+                <button class="city-btn" data-lat="52.4268" data-lon="30.9985" data-zoom="15.2" data-pitch="45" data-city="Гомель">Гомель</button>
+                <button class="city-btn" data-lat="55.1904" data-lon="30.2054" data-zoom="15.2" data-pitch="45" data-city="Витебск">Витебск</button>
+                <button class="city-btn" data-lat="53.9024" data-lon="30.3365" data-zoom="15.2" data-pitch="45" data-city="Могилёв">Могилёв</button>
+            </div>
+
+            <div class="layers-group">
+                <button id="toggle-3d-btn" class="layer-toggle-btn active" title="Переключить 3D-экструзию зданий по этажности">
+                    3D Здания
+                </button>
+                <button id="toggle-parcels-btn" class="layer-toggle-btn active" title="Показать/скрыть границы земельных участков">
+                    Земельные участки
+                </button>
+                <button id="toggle-catalog-btn" class="layer-toggle-btn" title="Открыть реестр опорных объектов РБ">
+                    Реестр объектов
+                </button>
+            </div>
+        </div>
+
+        <!-- Основная рабочая область -->
+        <main class="gis-main">
+            <!-- Контейнер карты MapLibre GL -->
+            <div id="map" class="map-canvas"></div>
+
+            <!-- Легенда кадастровых слоев и подсказка -->
+            <div class="map-legend" id="map-legend">
+                <div class="legend-header">
+                    <span>Условные обозначения</span>
+                    <button id="legend-collapse-btn" class="legend-toggle" title="Свернуть легенду">–</button>
+                </div>
+                <div id="legend-body" class="legend-body">
+                    <div class="legend-item">
+                        <span class="swatch swatch-retail"></span>
+                        <span>Торгово-развлекательные объекты</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="swatch swatch-office"></span>
+                        <span>Бизнес-центры и ИТ-парки</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="swatch swatch-public"></span>
+                        <span>Госучреждения и объекты культуры</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="swatch swatch-university"></span>
+                        <span>Университеты и наука</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="swatch swatch-parcel"></span>
+                        <span>Границы кадастровых участков</span>
+                    </div>
+                    <div class="legend-hint">
+                        Нажмите на <strong>любое здание</strong> на карте РБ для просмотра кадастрового паспорта и списка организаций внутри.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Статусная строка координат курсора -->
+            <div class="coords-statusbar">
+                <span id="cursor-coords">Ш: 53.90000°, Д: 27.56000° (WGS84)</span>
+                <span class="status-sep">|</span>
+                <span id="map-zoom-indicator">Масштаб: Z6.6</span>
+            </div>
+
+            <!-- Выдвижная панель реестра всех объектов (слева) -->
+            <aside id="catalog-panel" class="catalog-panel hidden">
+                <div class="panel-header">
+                    <div>
+                        <h2>Реестр объектов РБ</h2>
+                        <p class="panel-sub">Быстрый выбор здания для осмотра</p>
+                    </div>
+                    <button id="close-catalog-btn" class="icon-btn" title="Закрыть реестр">✕</button>
+                </div>
+                <div class="catalog-filters">
+                    <select id="catalog-city-filter">
+                        <option value="">Все города Беларуси</option>
+                        <option value="Минск">г. Минск</option>
+                        <option value="Брест">г. Брест</option>
+                        <option value="Гродно">г. Гродно</option>
+                        <option value="Гомель">г. Гомель</option>
+                        <option value="Витебск">г. Витебск</option>
+                        <option value="Могилёв">г. Могилёв</option>
+                    </select>
+                </div>
+                <div id="catalog-list" class="catalog-list"></div>
+            </aside>
+
+            <!-- Боковая карточка выбранного здания и его организаций (справа) -->
+            <aside id="building-drawer" class="building-drawer hidden">
+                <div class="drawer-header">
+                    <div class="drawer-badges">
+                        <span id="b-type-badge" class="badge badge-primary">Капитальное строение</span>
+                        <span id="b-city-badge" class="badge badge-outline">г. Минск</span>
+                    </div>
+                    <button id="close-drawer-btn" class="icon-btn" title="Закрыть карточку">✕</button>
+                </div>
+
+                <div class="drawer-title-section">
+                    <h2 id="b-title">Загрузка объекта...</h2>
+                    <p id="b-address" class="drawer-address"></p>
+
+                    <div class="cadastral-num-box">
+                        <div>
+                            <span class="cad-label">Кадастровый номер строения:</span>
+                            <code id="b-cadastral-num">500000000000000000:С-1</code>
+                        </div>
+                        <button id="copy-cad-btn" class="copy-btn" title="Скопировать кадастровый номер">Копировать</button>
+                    </div>
+                </div>
+
+                <!-- Краткие метрики здания -->
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <span class="metric-label">Организаций внутри</span>
+                        <strong id="b-metric-orgs" class="metric-value highlight">0</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">Этажность</span>
+                        <strong id="b-metric-floors" class="metric-value">—</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">Площадь застройки</span>
+                        <strong id="b-metric-area" class="metric-value">— м²</strong>
+                    </div>
+                </div>
+
+                <!-- Вкладки внутри карточки здания -->
+                <div class="drawer-tabs">
+                    <button class="tab-btn active" data-tab="tab-organizations">
+                        Организации внутри <span id="tab-org-count" class="tab-counter">0</span>
+                    </button>
+                    <button class="tab-btn" data-tab="tab-passport">
+                        Кадастровый паспорт
+                    </button>
+                </div>
+
+                <!-- Вкладка 1: Список организаций внутри здания -->
+                <div id="tab-organizations" class="tab-content active">
+                    <div class="org-filter-bar">
+                        <input
+                            id="inner-org-search"
+                            type="text"
+                            placeholder="Фильтр по названию, этажу, категории или УНП..."
+                        />
+                        <div id="org-category-chips" class="category-chips"></div>
+                    </div>
+                    <div id="organizations-list" class="organizations-list"></div>
+                </div>
+
+                <!-- Вкладка 2: Полный кадастровый паспорт здания и участка -->
+                <div id="tab-passport" class="tab-content hidden">
+                    <div class="passport-section">
+                        <h3>Сведения ЕГРНИ о капитальном строении</h3>
+                        <dl class="passport-dl" id="building-passport-dl"></dl>
+                    </div>
+
+                    <div class="passport-section" id="parcel-passport-section">
+                        <h3>Земельный участок (Кадастровый квартал)</h3>
+                        <dl class="passport-dl" id="parcel-passport-dl"></dl>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
