@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.building import Building
@@ -464,7 +464,6 @@ async def attach_egr_records_to_building(
     existing_names = {o.name.strip().lower() for o in existing_orgs if o.name}
 
     added_count = 0
-    inactive_ids_to_delete: list[int] = []
 
     async with httpx.AsyncClient(timeout=6.0) as client:
         for rec in egr_records:
@@ -472,25 +471,34 @@ async def attach_egr_records_to_building(
                 continue
 
             # Если у адресной записи ЕГР еще не было подтянуто наименование ЮЛ,
-            # проверяем ее актуальность и имя напрямую через egr.gov.by/api/v2/egr/getShortInfoByRegNum/{unp}
+            # проверяем ее актуальность и имя напрямую через egr.gov.by/api/v2/egr/getShortInfoByRegNum/{unp}.
+            # При временной недоступности/204 запись НЕ удаляем: синхронизация уже отфильтровала неактивные.
             if not rec.short_name and verify_unnamed_live:
                 verified = await fetch_and_verify_egr_by_unp(rec.unp, client=client)
-                if verified is None:
-                    # Субъект ликвидирован или исключен из ЕГР — удаляем неактуальную запись!
-                    inactive_ids_to_delete.append(rec.id)
-                    continue
-                rec.short_name = verified["short_name"]
-                rec.full_name = verified["full_name"]
-                rec.oked_code = verified["oked_code"] or rec.oked_code
-                rec.oked_name = verified["oked_name"] or rec.oked_name
-                rec.category = classify_category_by_oked_or_name(
-                    rec.short_name, rec.oked_code, rec.oked_name
-                )
+                if verified is not None:
+                    rec.short_name = verified["short_name"]
+                    rec.full_name = verified["full_name"]
+                    rec.oked_code = verified["oked_code"] or rec.oked_code
+                    rec.oked_name = verified["oked_name"] or rec.oked_name
+                    rec.category = classify_category_by_oked_or_name(
+                        rec.short_name, rec.oked_code, rec.oked_name
+                    )
 
             if not rec.short_name:
                 continue
 
-            if rec.short_name.strip().lower() in existing_names:
+            clean_name = rec.short_name.strip()
+            if len(clean_name) < 2 or clean_name.lower() in (
+                "-",
+                "--",
+                "—",
+                "б/н",
+                "нет данных",
+                "не указано",
+            ):
+                continue
+
+            if clean_name.lower() in existing_names:
                 continue
 
             room_display = None
@@ -509,7 +517,7 @@ async def attach_egr_records_to_building(
 
             org = Organization(
                 building_id=building.id,
-                name=rec.short_name,
+                name=clean_name,
                 category=rec.category,
                 subcategory=rec.oked_code or "egr_active",
                 description=" • ".join(desc_parts),
@@ -532,13 +540,10 @@ async def attach_egr_records_to_building(
             )
             session.add(org)
             existing_unps.add(rec.unp)
-            existing_names.add(rec.short_name.strip().lower())
+            existing_names.add(clean_name.lower())
             added_count += 1
 
-    if inactive_ids_to_delete:
-        await session.execute(delete(EgrRecord).where(EgrRecord.id.in_(inactive_ids_to_delete)))
-
-    if auto_commit and (added_count > 0 or inactive_ids_to_delete):
+    if auto_commit and added_count > 0:
         await session.commit()
 
     return added_count

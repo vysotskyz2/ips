@@ -22,8 +22,9 @@ STATIC_DIR = BASE_DIR / "static"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
-    async with AsyncSessionLocal() as session:
-        await ensure_seed_data(session)
+    if settings.enable_sample_seed:
+        async with AsyncSessionLocal() as session:
+            await ensure_seed_data(session)
     yield
 
 

@@ -267,6 +267,23 @@ def test_multiple_house_9_no_property_mixing():
     assert single["coordinates"][0][0][0] == [27.5520, 53.8980]
 
 
+def test_region_detection_uses_real_admin_boundaries():
+    from app.services.cadastral_service import detect_belarus_region_and_soato
+
+    # Барановичи находятся в Брестской области, а не в Гродненской
+    region, _, soato = detect_belarus_region_and_soato(53.1301, 26.0190)
+    assert region == "Брестская область"
+    assert soato.startswith("14")
+
+    # Крупные города определяются по реальным границам областей
+    assert detect_belarus_region_and_soato(53.9000, 27.5600)[0] == "г. Минск"
+    assert detect_belarus_region_and_soato(53.6667, 23.8333)[0] == "Гродненская область"
+    assert detect_belarus_region_and_soato(52.0975, 23.7341)[0] == "Брестская область"
+    assert detect_belarus_region_and_soato(55.1904, 30.2049)[0] == "Витебская область"
+    assert detect_belarus_region_and_soato(52.4345, 30.9754)[0] == "Гомельская область"
+    assert detect_belarus_region_and_soato(53.9006, 30.3319)[0] == "Могилёвская область"
+
+
 def test_egr_only_active_entities_accepted():
     from app.services.egr_service import (
         is_egr_address_active,

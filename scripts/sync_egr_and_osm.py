@@ -31,7 +31,6 @@ from app.services.cadastral_service import (
     compute_polygon_area_sqm,
     detect_belarus_region_and_soato,
     enrich_building_from_osm_and_egr,
-    ensure_seed_data,
     fetch_osm_map_box,
     generate_cadastral_numbers,
     get_stats,
@@ -61,13 +60,17 @@ BELARUS_HOTSPOT_BBOXES: list[tuple[str, tuple[float, float, float, float]]] = [
 
 
 async def import_osm_and_egr_for_bbox(
-    session, label: str, bbox: tuple[float, float, float, float]
+    session,
+    label: str,
+    bbox: tuple[float, float, float, float],
+    city_hint: str | None = None,
 ) -> tuple[int, int]:
     """
     Импортирует реальные здания и ВСЕ организации внутри них из OpenStreetMap API v0.6
     и привязывает действующие организации из ЕГР (egr.gov.by) по точному адресу.
     """
     min_lon, min_lat, max_lon, max_lat = bbox
+    hotspot_city = city_hint or label.split("(")[0].strip()
     print(f"Загрузка квартала OSM: {label}...")
     osm_data = await fetch_osm_map_box(min_lon, min_lat, max_lon, max_lat)
     if not osm_data:
@@ -107,7 +110,13 @@ async def import_osm_and_egr_for_bbox(
         center_lat = round(poly.centroid.y, 6)
         region_name, default_city, _ = detect_belarus_region_and_soato(center_lat, center_lon)
 
-        raw_city = tags.get("addr:city:ru") or tags.get("addr:city") or default_city
+        raw_city = (
+            tags.get("addr:city:ru")
+            or tags.get("addr:city")
+            or tags.get("addr:town")
+            or tags.get("addr:village")
+            or hotspot_city
+        )
         city_val = canonicalize_city_name(raw_city, default_city=default_city)
         street_val = (
             tags.get("addr:street:ru")
@@ -277,8 +286,6 @@ async def main() -> None:
         pass
     await init_db()
     async with AsyncSessionLocal() as session:
-        await ensure_seed_data(session)
-
         from sqlalchemy import func
 
         existing_egr_cnt = (

@@ -419,7 +419,7 @@ function renderBuildingDrawer(building, shouldFly = true) {
 
     document.getElementById("b-type-badge").textContent =
         BUILDING_TYPE_LABELS[building.building_type] || building.purpose_label || "Капитальное строение";
-    document.getElementById("b-city-badge").textContent = `г. ${building.address_city}`;
+    document.getElementById("b-city-badge").textContent = formatCityLabel(building.address_city);
     document.getElementById("b-title").textContent = building.name || building.full_address;
     document.getElementById("b-address").textContent = building.full_address;
     document.getElementById("b-cadastral-num").textContent = building.cadastral_number;
@@ -623,7 +623,7 @@ function renderCatalogList() {
         card.innerHTML = `
             <div class="catalog-card-title">${escapeHtml(p.name)}</div>
             <div class="catalog-card-meta">
-                <span>г. ${escapeHtml(p.address_city)}</span>
+                <span>${escapeHtml(formatCityLabel(p.address_city))}</span>
                 <span style="color:#34d399; font-weight:600;">Орг.: ${p.org_count}</span>
             </div>
         `;
@@ -829,6 +829,15 @@ async function executeGlobalSearch(query) {
     } catch (e) {
         console.error("Ошибка поиска:", e);
     }
+}
+
+function formatCityLabel(city) {
+    const value = String(city || "").trim();
+    if (!value) return "Республика Беларусь";
+    if (/^(г\.|город)\s/i.test(value) || /(область|район)$/i.test(value)) {
+        return value;
+    }
+    return `г. ${value}`;
 }
 
 function escapeHtml(str) {

@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     database_url: str = "sqlite+aiosqlite:///./cadastral_rb.db"
     enable_live_osm_enrichment: bool = True
+    enable_live_reverse_geocoding: bool = True
+    enable_live_egr_verification: bool = False
+    enable_egr_enrichment: bool = True
+    enable_sample_seed: bool = False
     overpass_api_url: str = "https://overpass-api.de/api/interpreter"
     geofabrik_belarus_pbf_url: str = "https://download.geofabrik.de/europe/belarus-latest.osm.pbf"
 

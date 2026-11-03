@@ -23,7 +23,6 @@ from app.services.cadastral_service import (
     _classify_osm_poi,
     compute_polygon_area_sqm,
     detect_belarus_region_and_soato,
-    ensure_seed_data,
     generate_cadastral_numbers,
 )
 from app.services.seed_data import make_rect_polygon
@@ -170,8 +169,8 @@ async def import_from_overpass_bbox(
                 purpose_label=BUILDING_PURPOSE_LABELS.get(raw_btype, "Капитальное строение"),
                 address_region=region_name,
                 address_city=tags.get("addr:city") or city_name or default_city,
-                address_street=tags.get("addr:street") or "ул. Центральная",
-                address_housenumber=tags.get("addr:housenumber") or str(osm_id % 120 + 1),
+                address_street=tags.get("addr:street:ru") or tags.get("addr:street"),
+                address_housenumber=tags.get("addr:housenumber"),
                 postal_code=tags.get("addr:postcode"),
                 floors=floors,
                 area_sqm=area_sqm,
@@ -318,8 +317,6 @@ async def async_main() -> None:
     args = parser.parse_args()
 
     await init_db()
-    async with AsyncSessionLocal() as session:
-        await ensure_seed_data(session)
 
     if args.pbf:
         import_from_pbf_file(args.pbf, limit=args.limit)

@@ -11,6 +11,10 @@ from app.services.cadastral_service import ensure_seed_data, get_stats
 
 
 async def main() -> None:
+    print(
+        "ВНИМАНИЕ: скрипт добавляет демонстрационные опорные объекты с упрощённой геометрией.\n"
+        "Для реальных данных просто кликайте по зданиям на карте (OSM API v0.6 + ЕГР)."
+    )
     await init_db()
     async with AsyncSessionLocal() as session:
         await ensure_seed_data(session)

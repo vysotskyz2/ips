@@ -37,6 +37,10 @@ from app.services.address_matcher import (
     translate_belarusian_street_to_ru,
 )
 from app.services.egr_service import attach_egr_records_to_building
+from app.services.geo_locator import (
+    detect_belarus_region_and_soato,
+    resolve_city_and_region,
+)
 from app.services.seed_data import SEED_PARCELS_AND_BUILDINGS, make_rect_polygon
 
 logger = logging.getLogger(__name__)
@@ -177,25 +181,11 @@ POI_TAG_KEYS = (
 )
 
 
-def detect_belarus_region_and_soato(lat: float, lon: float) -> tuple[str, str, str]:
-    """Определяет область/город Беларуси и префикс кадастрового номера СОАТО по координатам."""
-    if 53.82 <= lat <= 53.98 and 27.40 <= lon <= 27.72:
-        return "г. Минск", "Минск", "5000000000"
-    if lat < 52.85 and lon < 26.8:
-        return "Брестская область", "Брест", "1401000000"
-    if lat >= 52.85 and lon < 26.3:
-        return "Гродненская область", "Гродно", "4401000000"
-    if lat < 53.35 and lon >= 28.5:
-        return "Гомельская область", "Гомель", "3401000000"
-    if lat >= 54.55:
-        return "Витебская область", "Витебск", "2401000000"
-    if lon >= 29.2 and 53.35 <= lat < 54.55:
-        return "Могилёвская область", "Могилёв", "7401000000"
-    return "Минская область", "Минская обл.", "6401000000"
-
-
 def generate_cadastral_numbers(
-    lat: float, lon: float, osm_id: int | None = None
+    lat: float,
+    lon: float,
+    osm_id: int | None = None,
+    soato_prefix: str | None = None,
 ) -> tuple[str, str, str]:
     """
     Формирует уникальный структурированный кадастровый номер земельного участка и здания
@@ -203,7 +193,8 @@ def generate_cadastral_numbers(
     Учитывает точные координаты и osm_id, чтобы два разных дома с одинаковым номером (д. 9)
     всегда получали уникальные кадастровые номера.
     """
-    _, _, soato_prefix = detect_belarus_region_and_soato(lat, lon)
+    if not soato_prefix:
+        _, _, soato_prefix = detect_belarus_region_and_soato(lat, lon)
     seed_str = f"{osm_id or 0}:{lat:.6f}:{lon:.6f}"
     digest = hashlib.sha1(seed_str.encode("utf-8")).hexdigest()
     num_hash = int(digest[:10], 16)
@@ -632,6 +623,26 @@ async def enrich_building_from_osm_and_egr(
                     building.postal_code = ob_tags.get("addr:postcode")
                 if not building.name:
                     building.name = ob_tags.get("name:ru") or ob_tags.get("name")
+
+                osm_city = (
+                    ob_tags.get("addr:city:ru")
+                    or ob_tags.get("addr:city")
+                    or ob_tags.get("addr:town")
+                    or ob_tags.get("addr:village")
+                    or ob_tags.get("addr:municipality")
+                )
+                if osm_city:
+                    canonical_city = canonicalize_city_name(
+                        osm_city, default_city=building.address_city or "Минск"
+                    )
+                    if normalize_city(canonical_city) != normalize_city(building.address_city):
+                        building.address_city = canonical_city
+
+                detected_region, _, _ = detect_belarus_region_and_soato(
+                    building.center_lat, building.center_lon
+                )
+                if detected_region and detected_region != building.address_region:
+                    building.address_region = detected_region
             else:
                 try:
                     poly = shape(json.loads(building.geometry_geojson))
@@ -748,13 +759,14 @@ async def enrich_building_from_osm_and_egr(
 
     # 2. Привязка ВСЕХ актуальных (Действующих) субъектов из реестра ЕГР Минюста РБ (egr.gov.by)
     # строго по адресу этого здания (город + улица + дом/корпус)
-    egr_added = await attach_egr_records_to_building(
-        session,
-        building,
-        verify_unnamed_live=False,
-        auto_commit=auto_commit,
-    )
-    added_total += egr_added
+    if settings.enable_egr_enrichment:
+        egr_added = await attach_egr_records_to_building(
+            session,
+            building,
+            verify_unnamed_live=False,
+            auto_commit=auto_commit,
+        )
+        added_total += egr_added
 
     return added_total
 
@@ -919,11 +931,12 @@ async def get_building_detail(session: AsyncSession, building_id: int) -> Buildi
         return None
 
     # Подтягиваем актуальные организации из ЕГР (egr.gov.by), если в реестре появились новые записи для этого адреса
-    egr_added = await attach_egr_records_to_building(
-        session, building, verify_unnamed_live=settings.enable_live_osm_enrichment
-    )
-    if egr_added > 0:
-        await session.refresh(building, attribute_names=["organizations"])
+    if settings.enable_egr_enrichment:
+        egr_added = await attach_egr_records_to_building(
+            session, building, verify_unnamed_live=settings.enable_live_egr_verification
+        )
+        if egr_added > 0:
+            await session.refresh(building, attribute_names=["organizations"])
 
     return _building_to_detail(building)
 
@@ -1066,9 +1079,16 @@ async def get_or_enrich_building_by_coords(
             return _building_to_detail(existing_by_osm)
 
     # 4. Формируем геометрию и адресные атрибуты строго для кликнутого здания
-    region_name, default_city, _ = detect_belarus_region_and_soato(lat, lon)
     b_tags: dict[str, str] = chosen_osm_b["tags"] if chosen_osm_b else {}
     osm_id_val: int | None = chosen_osm_b["osm_id"] if chosen_osm_b else None
+    raw_city = (
+        b_tags.get("addr:city:ru")
+        or b_tags.get("addr:city")
+        or b_tags.get("addr:town")
+        or b_tags.get("addr:village")
+        or b_tags.get("addr:municipality")
+        or hint_city
+    )
 
     single_hint_geom = extract_single_building_polygon(hint_geometry, lon, lat)
 
@@ -1101,8 +1121,17 @@ async def get_or_enrich_building_by_coords(
         # В точке клика нет реального здания — ничего не создаем!
         return None
 
+    city_val, region_name, soato_prefix = await resolve_city_and_region(
+        center_lat_val,
+        center_lon_val,
+        raw_city=raw_city,
+    )
+
     parcel_cad, building_cad, inv_num = generate_cadastral_numbers(
-        center_lat_val, center_lon_val, osm_id_val
+        center_lat_val,
+        center_lon_val,
+        osm_id_val,
+        soato_prefix=soato_prefix,
     )
 
     existing_b_by_cad = (
@@ -1124,9 +1153,6 @@ async def get_or_enrich_building_by_coords(
         floors_val = max(1, int(float(floors_str))) if floors_str else 3
     except ValueError:
         floors_val = 3
-
-    raw_city = b_tags.get("addr:city:ru") or b_tags.get("addr:city") or hint_city or default_city
-    city_val = canonicalize_city_name(raw_city, default_city=default_city)
 
     raw_street = (
         b_tags.get("addr:street:ru")

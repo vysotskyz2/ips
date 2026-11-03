@@ -72,7 +72,12 @@ class Building(Base):
     def full_address(self) -> str:
         parts: list[str] = []
         if self.address_city:
-            parts.append(f"г. {self.address_city}" if not self.address_city.startswith("г.") else self.address_city)
+            city = self.address_city.strip()
+            is_region_or_district = city.lower().endswith(("область", "район"))
+            if city.startswith(("г.", "г ")) or is_region_or_district:
+                parts.append(city)
+            else:
+                parts.append(f"г. {city}")
         if self.address_street:
             parts.append(self.address_street)
         if self.address_housenumber:
