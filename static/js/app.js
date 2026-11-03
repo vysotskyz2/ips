@@ -122,6 +122,17 @@ async function setupCadastralLayers() {
         },
     });
 
+    // Плоский 2D-слой контуров зданий для точного определения клика по основанию здания (без искажений 3D-экструзии)
+    map.addLayer({
+        id: "cadastral-buildings-footprint",
+        type: "fill",
+        source: "cadastral-buildings-geojson",
+        paint: {
+            "fill-color": "#0ea5e9",
+            "fill-opacity": 0.02,
+        },
+    });
+
     // Слой 3D/2D кадастровых зданий из нашей БД
     map.addLayer({
         id: "cadastral-buildings-3d",
@@ -176,15 +187,17 @@ async function setupCadastralLayers() {
         type: "circle",
         source: "cadastral-mvt",
         "source-layer": "building_markers",
+        maxzoom: 16.2,
         paint: {
             "circle-radius": [
                 "interpolate", ["linear"], ["zoom"],
-                6, 6,
-                12, 11,
-                16, 14,
+                6, 5,
+                12, 9,
+                15, 10,
+                16, 7,
             ],
             "circle-color": "#0ea5e9",
-            "circle-stroke-width": 2,
+            "circle-stroke-width": 1.5,
             "circle-stroke-color": "#ffffff",
         },
     });
@@ -194,9 +207,10 @@ async function setupCadastralLayers() {
         type: "symbol",
         source: "cadastral-mvt",
         "source-layer": "building_markers",
+        maxzoom: 16.2,
         layout: {
             "text-field": ["to-string", ["get", "org_count"]],
-            "text-size": 11,
+            "text-size": 10,
             "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
         },
         paint: {
@@ -205,13 +219,14 @@ async function setupCadastralLayers() {
     });
 
     // Наведение курсора на кадастровые здания
-    const interactiveLayers = ["cadastral-buildings-3d", "cadastral-markers-circle"];
+    const interactiveLayers = ["cadastral-buildings-footprint", "cadastral-markers-circle"];
     interactiveLayers.forEach((layerId) => {
         map.on("mouseenter", layerId, (e) => {
             map.getCanvas().style.cursor = "pointer";
             if (e.features && e.features.length > 0) {
                 const props = e.features[0].properties;
                 const title = props.name || props.label || "Капитальное строение";
+                const addr = props.full_address || [props.address_street, props.address_housenumber].filter(Boolean).join(", ");
                 const orgCount = props.org_count ?? 0;
                 const cadNum = props.cadastral_number || "";
                 hoverPopup
@@ -219,6 +234,7 @@ async function setupCadastralLayers() {
                     .setHTML(
                         `<div>
                             <strong>${escapeHtml(title)}</strong><br/>
+                            ${addr ? `<span style="color:#cbd5e1">${escapeHtml(addr)}</span><br/>` : ""}
                             <span style="color:#94a3b8">Кадастровый №: ${escapeHtml(cadNum)}</span><br/>
                             <span style="color:#34d399">Организаций внутри: <b>${orgCount}</b> (нажмите для просмотра)</span>
                         </div>`
@@ -234,47 +250,83 @@ async function setupCadastralLayers() {
     });
 
     // Универсальный клик по карте:
-    // 1) Сначала проверяем клик по нашим кадастровым слоям (здания или маркеры)
-    // 2) Если кликнули по ЛЮБОМУ другому зданию на карте Беларуси (из базового векторного слоя OSM),
-    //    автоматически инспектируем здание через /api/v1/buildings/inspect и открываем его карточку!
+    // 1) Сначала проверяем точное попадание клика в 2D-основание зарегистрированного здания
+    // 2) Только на обзорных масштабах (< 15) проверяем клик по точечному маркеру
+    // 3) Если кликнули по ЛЮБОМУ другому зданию на карте Беларуси — инспектируем его точно по координатам клика!
     map.on("click", async (e) => {
-        const hitCadastral = map.queryRenderedFeatures(e.point, {
-            layers: ["cadastral-buildings-3d", "cadastral-markers-circle"],
+        const clickLon = e.lngLat.lng;
+        const clickLat = e.lngLat.lat;
+
+        const hitFootprints = map.queryRenderedFeatures(e.point, {
+            layers: ["cadastral-buildings-footprint"],
         });
 
-        if (hitCadastral.length > 0) {
-            const buildingId = hitCadastral[0].properties.id;
-            if (buildingId) {
-                await selectBuildingById(buildingId);
+        // Ищем здание, внутри полигона которого реально находится точка клика (clickLon, clickLat)
+        const exactFootprint = hitFootprints.find(
+            (f) => f.geometry && isPointInsideGeoJSON(clickLon, clickLat, f.geometry)
+        ) || hitFootprints[0];
+
+        if (exactFootprint && exactFootprint.properties && exactFootprint.properties.id) {
+            await selectBuildingById(exactFootprint.properties.id, false);
+            return;
+        }
+
+        if (map.getZoom() < 15.2) {
+            const hitMarkers = map.queryRenderedFeatures(e.point, {
+                layers: ["cadastral-markers-circle"],
+            });
+            if (hitMarkers.length > 0 && hitMarkers[0].properties.id) {
+                await selectBuildingById(hitMarkers[0].properties.id, true);
                 return;
             }
         }
 
-        // Проверяем все векторные слои карты в точке клика (включая все здания Беларуси из OpenFreeMap)
+        // Проверяем векторный слой зданий базовой карты (OpenFreeMap) СТРОГО по вхождению точки клика в полигон здания.
+        // Клик по пустому месту, дороге, парку или воде игнорируется и не создает никаких объектов!
         const allRendered = map.queryRenderedFeatures(e.point);
         const osmBuildingFeature = allRendered.find((f) => {
+            if (!f.geometry || (f.geometry.type !== "Polygon" && f.geometry.type !== "MultiPolygon")) {
+                return false;
+            }
             const srcLayer = (f.sourceLayer || "").toLowerCase();
             const lid = (f.layer?.id || "").toLowerCase();
-            return (
+            const isBuildingLayer =
                 srcLayer.includes("building") ||
                 lid.includes("building") ||
-                (f.properties && f.properties.building)
-            );
+                (f.properties && f.properties.building);
+            if (!isBuildingLayer) return false;
+            return isPointInsideGeoJSON(clickLon, clickLat, f.geometry);
         });
 
-        if (osmBuildingFeature || map.getZoom() >= 15) {
-            const props = osmBuildingFeature ? osmBuildingFeature.properties || {} : {};
-            const geom =
-                osmBuildingFeature &&
-                osmBuildingFeature.geometry &&
-                (osmBuildingFeature.geometry.type === "Polygon" ||
-                    osmBuildingFeature.geometry.type === "MultiPolygon")
-                    ? osmBuildingFeature.geometry
-                    : null;
-
-            await inspectBuildingAtCoords(e.lngLat.lat, e.lngLat.lng, props, geom);
+        if (osmBuildingFeature) {
+            const props = osmBuildingFeature.properties || {};
+            await inspectBuildingAtCoords(clickLat, clickLon, props, osmBuildingFeature.geometry);
         }
     });
+}
+
+function isPointInRing(lon, lat, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+        const intersect =
+            yi > lat !== yj > lat &&
+            lon < ((xj - xi) * (lat - yi)) / (yj - yi + 1e-12) + xi;
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function isPointInsideGeoJSON(lon, lat, geometry) {
+    if (!geometry || !geometry.coordinates) return false;
+    if (geometry.type === "Polygon") {
+        return geometry.coordinates[0] && isPointInRing(lon, lat, geometry.coordinates[0]);
+    }
+    if (geometry.type === "MultiPolygon") {
+        return geometry.coordinates.some((poly) => poly[0] && isPointInRing(lon, lat, poly[0]));
+    }
+    return false;
 }
 
 async function selectBuildingById(buildingId, flyToBuilding = true) {
@@ -299,7 +351,7 @@ async function inspectBuildingAtCoords(lat, lon, props = {}, geometry = null) {
             city: props["addr:city"] || props.city || null,
             floors: props.render_height ? Math.max(1, Math.round(Number(props.render_height) / 3.5)) : null,
             building_type: props.building || props.class || null,
-            osm_id: props.id ? Number(props.id) : null,
+            osm_id: null,
             geometry: geometry,
         };
 
@@ -451,6 +503,11 @@ function renderOrganizationsList() {
         card.className = "org-card";
 
         const floorRoom = [org.floor, org.room].filter(Boolean).join(", ") || "1 этаж";
+        const metaSource = (org.metadata_json && org.metadata_json.source) || "OpenStreetMap / ЕГР РБ";
+        const isEgr = metaSource.toLowerCase().includes("егр");
+        const sourceTagHtml = isEgr
+            ? `<span style="color:#34d399; font-size:10.5px; font-weight:600;">✓ ЕГР РБ (Действующий)</span>`
+            : `<span style="color:#94a3b8; font-size:10.5px;">OSM РБ</span>`;
         const websiteHtml = org.website
             ? `<a href="${escapeHtml(org.website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
                   org.website.replace(/^https?:\/\//, "")
@@ -462,7 +519,10 @@ function renderOrganizationsList() {
                 <div class="org-name">${escapeHtml(org.name)}</div>
                 <span class="org-floor-badge">${escapeHtml(floorRoom)}</span>
             </div>
-            <div class="org-cat-line">${escapeHtml(org.category)}</div>
+            <div class="org-cat-line" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>${escapeHtml(org.category)}</span>
+                ${sourceTagHtml}
+            </div>
             ${org.description ? `<div class="org-desc">${escapeHtml(org.description)}</div>` : ""}
             <div class="org-details-grid">
                 <div class="org-detail-item">Режим: <strong>${escapeHtml(org.opening_hours || "09:00-18:00")}</strong></div>

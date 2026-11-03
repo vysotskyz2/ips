@@ -120,11 +120,11 @@ async def test_inspect_any_building_on_map():
         resp_new = await client.post(
             "/api/v1/buildings/inspect",
             json={
-                "lat": 53.9052,
-                "lon": 27.5612,
-                "name": "Деловой центр «Октябрьская площадь»",
+                "lat": 53.9215,
+                "lon": 27.6125,
+                "name": "Деловой центр «Академический»",
                 "street": "пр-т Независимости",
-                "housenumber": "23",
+                "housenumber": "99",
                 "city": "Минск",
                 "floors": 6,
                 "building_type": "office",
@@ -133,12 +133,168 @@ async def test_inspect_any_building_on_map():
         assert resp_new.status_code == 200
         data_new = resp_new.json()
         assert data_new["address_city"] == "Минск"
-        assert data_new["organizations_count"] >= 1
+        assert data_new["address_housenumber"] == "99"
         assert data_new["cadastral_number"].startswith("5000000000")
 
-        # 3. Координаты вне территории Республики Беларусь -> 404
+        # Удаляем тестовое здание после проверки
+        from sqlalchemy import delete
+        from app.models.building import Building
+        from app.models.parcel import CadastralParcel
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(Building).where(Building.id == data_new["id"]))
+            if data_new.get("parcel_id"):
+                await session.execute(
+                    delete(CadastralParcel).where(CadastralParcel.id == data_new["parcel_id"])
+                )
+            await session.commit()
+
+        # 3. Клик по пустому месту (парк/дорога/река без здания) -> 404, ничего фейкового не создается!
+        resp_empty_spot = await client.post(
+            "/api/v1/buildings/inspect",
+            json={
+                "lat": 53.9030,
+                "lon": 27.5540,
+            },
+        )
+        assert resp_empty_spot.status_code == 404
+
+        # 4. Координаты вне территории Республики Беларусь -> 404
         resp_outside = await client.get(
             "/api/v1/buildings/by-coords",
             params={"lat": 48.8566, "lon": 2.3522},
         )
         assert resp_outside.status_code == 404
+
+
+def test_multiple_house_9_no_property_mixing():
+    from shapely.geometry import Polygon
+
+    from app.services.address_matcher import (
+        addresses_strictly_match,
+        extract_single_building_polygon,
+        has_address_conflict,
+    )
+    from app.services.cadastral_service import match_pois_strictly_to_building
+
+    # 1. Дома с одинаковым номером "9" на разных улицах НЕ должны совпадать и должны определяться как конфликт
+    assert not addresses_strictly_match(
+        "Минск", "пр-т Победителей", "9", "Минск", "ул. Немига", "9"
+    )
+    assert has_address_conflict(
+        "Минск", "пр-т Победителей", "9", "Минск", "ул. Володарского", "9"
+    )
+
+    # 2. Дом "9", дом "9А" и дом "9 к. 1" на одной улице — это РАЗНЫЕ здания
+    assert not addresses_strictly_match(
+        "Минск", "пр-т Победителей", "9", "Минск", "пр-т Победителей", "9А"
+    )
+    assert not addresses_strictly_match(
+        "Минск", "пр-т Победителей", "9", "Минск", "пр-т Победителей", "9", "1"
+    )
+    assert has_address_conflict(
+        "Минск", "пр-т Победителей", "9", "Минск", "пр-т Победителей", "9А"
+    )
+
+    # 3. Белорусское и русское название одного и того же адреса (праспект Пераможцаў, 9 == пр-т Победителей, 9)
+    assert addresses_strictly_match(
+        "Мінск", "праспект Пераможцаў", "9", "Минск", "проспект Победителей", "9"
+    )
+
+    # 4. Два соседних корпуса впритык друг к другу (общая стена x=27.5510):
+    # организация внутри корпуса B у самой стены НЕ должна попадать в корпус A
+    poly_a = Polygon(
+        [(27.5500, 53.8970), (27.5510, 53.8970), (27.5510, 53.8975), (27.5500, 53.8975)]
+    )
+    poly_b = Polygon(
+        [(27.5510, 53.8970), (27.5520, 53.8970), (27.5520, 53.8975), (27.5510, 53.8975)]
+    )
+    pois = [
+        {
+            "osm_id": 1001,
+            "lon": 27.5505,
+            "lat": 53.8972,
+            "tags": {"name": "Кофейня Корпус А", "amenity": "cafe", "addr:street": "ул. Карла Маркса", "addr:housenumber": "9"},
+        },
+        {
+            "osm_id": 1002,
+            "lon": 27.55101,  # Внутри корпуса B, в 1 метре от стены корпуса A!
+            "lat": 53.8972,
+            "tags": {"name": "Салон Корпус Б", "shop": "beauty", "addr:street": "ул. Карла Маркса", "addr:housenumber": "9"},
+        },
+        {
+            "osm_id": 1003,
+            "lon": 27.5505,
+            "lat": 53.8972,
+            "tags": {"name": "Чужой дом №9 с соседней улицы", "shop": "books", "addr:street": "ул. Володарского", "addr:housenumber": "9"},
+        },
+    ]
+    all_polys = [(1, poly_a), (2, poly_b)]
+
+    matched_a = match_pois_strictly_to_building(
+        building_poly=poly_a,
+        building_city="Минск",
+        building_street="ул. Карла Маркса",
+        building_house="9",
+        all_pois=pois,
+        all_building_polys=all_polys,
+        current_osm_id=1,
+    )
+    assert [p["osm_id"] for p in matched_a] == [1001]
+
+    matched_b = match_pois_strictly_to_building(
+        building_poly=poly_b,
+        building_city="Минск",
+        building_street="ул. Карла Маркса",
+        building_house="9",
+        all_pois=pois,
+        all_building_polys=all_polys,
+        current_osm_id=2,
+    )
+    assert [p["osm_id"] for p in matched_b] == [1002]
+
+    # 5. Выделение одного здания из объединенного MultiPolygon векторного тайла
+    multi_geom = {
+        "type": "MultiPolygon",
+        "coordinates": [
+            [[[27.5500, 53.8970], [27.5508, 53.8970], [27.5508, 53.8975], [27.5500, 53.8975], [27.5500, 53.8970]]],
+            [[[27.5520, 53.8980], [27.5528, 53.8980], [27.5528, 53.8985], [27.5520, 53.8985], [27.5520, 53.8980]]],
+        ],
+    }
+    single = extract_single_building_polygon(multi_geom, 27.5524, 53.8982)
+    assert single is not None
+    assert len(single["coordinates"]) == 1
+    assert single["coordinates"][0][0][0] == [27.5520, 53.8980]
+
+
+def test_egr_only_active_entities_accepted():
+    from app.services.egr_service import (
+        is_egr_address_active,
+        is_egr_entity_active,
+        is_egr_go_active,
+    )
+
+    # Действующее ЮЛ
+    assert is_egr_entity_active(
+        {"ngrn": 100325912, "dto": None, "nsi00219": {"nksost": 1, "vnsostk": "Действующий"}}
+    )
+    # Ликвидированное / исключенное ЮЛ
+    assert not is_egr_entity_active(
+        {"ngrn": 190990610, "dto": "2019-02-20", "nsi00219": {"nksost": 2, "vnsostk": "Исключен из ЕГР"}}
+    )
+    assert not is_egr_entity_active(
+        {"ngrn": 590830543, "dto": None, "nsi00219": {"nksost": 5, "vnsostk": "Прекращение деятельности"}}
+    )
+
+    # Актуальный адрес vs архивный адрес ЕГР
+    assert is_egr_address_active(
+        {"cact": "+", "dto": None, "vnp": "Минск", "vulitsa": "Независимости", "vdom": "10"}
+    )
+    assert not is_egr_address_active(
+        {"cact": "-", "dto": "2025-01-01", "vnp": "Минск", "vulitsa": "Независимости", "vdom": "10"}
+    )
+
+    # Действующий госорган vs упраздненный/прекращенный
+    assert is_egr_go_active({"cact": "+", "cstate": None, "dto": None})
+    assert not is_egr_go_active({"cact": "+", "cstate": "П", "dto": None})
+    assert not is_egr_go_active({"cact": "+", "cstate": "И", "dto": None})
