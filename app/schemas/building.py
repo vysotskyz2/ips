@@ -25,7 +25,7 @@ class BuildingDetail(BaseModel):
 
     id: int
     osm_id: int | None = None
-    cadastral_number: str
+    cadastral_number: str | None = None
     inventory_number: str | None = None
     parcel_id: int | None = None
     name: str | None = None

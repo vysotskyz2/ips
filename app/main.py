@@ -12,8 +12,7 @@ from app.api.buildings import router as buildings_router
 from app.api.search import router as search_router
 from app.api.tiles import router as tiles_router
 from app.config import settings
-from app.database import AsyncSessionLocal, init_db
-from app.services.cadastral_service import ensure_seed_data
+from app.database import init_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
@@ -22,9 +21,6 @@ STATIC_DIR = BASE_DIR / "static"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
-    if settings.enable_sample_seed:
-        async with AsyncSessionLocal() as session:
-            await ensure_seed_data(session)
     yield
 
 

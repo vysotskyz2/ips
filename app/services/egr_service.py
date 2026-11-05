@@ -505,10 +505,10 @@ async def attach_egr_records_to_building(
             if rec.room and rec.room not in ("б/н", "-"):
                 room_display = f"{rec.room_type or 'пом.'} {rec.room}".strip()
 
-            desc_parts = ["Действующий субъект ЕГР РБ"]
+            desc_parts = []
             if rec.oked_name:
                 desc_parts.append(f"ОКЭД: {rec.oked_name}")
-            elif rec.full_name and rec.full_name != rec.short_name:
+            if rec.full_name and rec.full_name != rec.short_name:
                 desc_parts.append(rec.full_name)
 
             website = rec.website
@@ -519,17 +519,17 @@ async def attach_egr_records_to_building(
                 building_id=building.id,
                 name=clean_name,
                 category=rec.category,
-                subcategory=rec.oked_code or "egr_active",
-                description=" • ".join(desc_parts),
+                subcategory=rec.oked_code,
+                description=" • ".join(desc_parts) or None,
                 unp=rec.unp,
-                floor="По данным ЕГР",
+                floor=None,
                 room=room_display,
-                opening_hours="Пн-Пт 09:00-18:00",
+                opening_hours=None,
                 phone=rec.phone,
                 website=website,
                 email=rec.email,
-                lat=building.center_lat,
-                lon=building.center_lon,
+                lat=None,
+                lon=None,
                 metadata_json={
                     "source": "ЕГР Минюста РБ (egr.gov.by)",
                     "status": "Действующий",

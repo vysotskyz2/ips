@@ -17,15 +17,12 @@ from app.config import settings
 from app.database import AsyncSessionLocal, init_db, sync_postgis_geometries
 from app.models.building import Building
 from app.models.organization import Organization
-from app.models.parcel import CadastralParcel
 from app.services.cadastral_service import (
-    BUILDING_PURPOSE_LABELS,
     _classify_osm_poi,
     compute_polygon_area_sqm,
     detect_belarus_region_and_soato,
     generate_cadastral_numbers,
 )
-from app.services.seed_data import make_rect_polygon
 
 CITY_BBOXES: dict[str, tuple[float, float, float, float]] = {
     "Минск": (53.888, 27.535, 53.912, 27.575),
@@ -106,13 +103,11 @@ async def import_from_overpass_bbox(
             lats = [c[1] for c in ring]
             center_lon = round(sum(lons[:-1]) / max(len(lons) - 1, 1), 6)
             center_lat = round(sum(lats[:-1]) / max(len(lats) - 1, 1), 6)
-            area_sqm = max(compute_polygon_area_sqm(ring), 30.0)
+            area_sqm = compute_polygon_area_sqm(ring)
 
             tags = w.get("tags", {})
             region_name, default_city, _ = detect_belarus_region_and_soato(center_lat, center_lon)
-            parcel_cad, building_cad, inv_num = generate_cadastral_numbers(
-                center_lat, center_lon, osm_id
-            )
+            _, building_cad, _ = generate_cadastral_numbers(center_lat, center_lon, osm_id)
 
             # Ищем все POI-точки внутри полигона здания (с буфером ~12м)
             buffered = poly.buffer(0.00012)
@@ -126,35 +121,11 @@ async def import_from_overpass_bbox(
             if raw_btype in ("yes", "true", "building"):
                 raw_btype = "commercial" if matched_nodes else "apartments"
 
-            lvl_str = tags.get("building:levels", "3")
+            lvl_str = tags.get("building:levels")
             try:
-                floors = max(1, int(float(lvl_str)))
+                floors = max(1, int(float(lvl_str))) if lvl_str else 0
             except ValueError:
-                floors = 3
-
-            p_geojson, p_bbox, p_area = make_rect_polygon(
-                center_lon, center_lat, 65.0, 50.0, 0.0
-            )
-            parcel = CadastralParcel(
-                cadastral_number=parcel_cad,
-                name=f"Участок {tags.get('addr:street', city_name)}",
-                region=region_name,
-                district=city_name,
-                land_use=raw_btype,
-                purpose="Земли застройки населенных пунктов РБ",
-                ownership_type="Государственная собственность",
-                area_sqm=p_area,
-                cadastral_value_byn=round(p_area * 380.0, 2),
-                center_lat=center_lat,
-                center_lon=center_lon,
-                min_lon=p_bbox[0],
-                min_lat=p_bbox[1],
-                max_lon=p_bbox[2],
-                max_lat=p_bbox[3],
-                geometry_geojson=p_geojson,
-            )
-            session.add(parcel)
-            await session.flush()
+                floors = 0
 
             b_geojson = json.dumps(
                 {"type": "MultiPolygon", "coordinates": [[ring]]}, ensure_ascii=False
@@ -162,17 +133,18 @@ async def import_from_overpass_bbox(
             building = Building(
                 osm_id=osm_id,
                 cadastral_number=building_cad,
-                inventory_number=inv_num,
-                parcel_id=parcel.id,
+                inventory_number=None,
+                parcel_id=None,
                 name=tags.get("name:ru") or tags.get("name"),
                 building_type=raw_btype,
-                purpose_label=BUILDING_PURPOSE_LABELS.get(raw_btype, "Капитальное строение"),
+                purpose_label=None,
                 address_region=region_name,
                 address_city=tags.get("addr:city") or city_name or default_city,
                 address_street=tags.get("addr:street:ru") or tags.get("addr:street"),
                 address_housenumber=tags.get("addr:housenumber"),
                 postal_code=tags.get("addr:postcode"),
                 floors=floors,
+                wall_material=tags.get("building:material"),
                 area_sqm=area_sqm,
                 center_lat=center_lat,
                 center_lon=center_lon,
@@ -190,7 +162,7 @@ async def import_from_overpass_bbox(
                 n_name = ntags.get("name:ru") or ntags.get("name")
                 if not n_name:
                     continue
-                cat, subcat, desc = _classify_osm_poi(ntags)
+                cat, subcat, _ = _classify_osm_poi(ntags)
                 session.add(
                     Organization(
                         osm_id=nd.get("id"),
@@ -198,9 +170,9 @@ async def import_from_overpass_bbox(
                         name=n_name,
                         category=cat,
                         subcategory=subcat,
-                        description=desc,
-                        floor=ntags.get("addr:floor") or ntags.get("level") or "1 этаж",
-                        opening_hours=ntags.get("opening_hours") or "09:00-20:00",
+                        description=ntags.get("description:ru") or ntags.get("description"),
+                        floor=ntags.get("addr:floor") or ntags.get("level"),
+                        opening_hours=ntags.get("opening_hours"),
                         phone=ntags.get("contact:phone") or ntags.get("phone"),
                         website=ntags.get("contact:website") or ntags.get("website"),
                         lat=nd["lat"],

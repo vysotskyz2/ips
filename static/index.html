@@ -15,7 +15,7 @@
                 <div class="brand-emblem" title="Кадастровая карта Республики Беларусь">РБ</div>
                 <div class="brand-titles">
                     <h1>Кадастровая карта Республики Беларусь</h1>
-                    <span class="brand-subtitle">Единый реестр зданий, земельных участков и организаций (OpenGIS / PostGIS MVT)</span>
+                    <span class="brand-subtitle">Здания и организации на данных OpenStreetMap и ЕГР РБ</span>
                 </div>
             </div>
 
@@ -29,7 +29,7 @@
                     <input
                         id="global-search-input"
                         type="text"
-                        placeholder="Поиск по кадастровому №, адресу, названию здания, организации или УНП..."
+                        placeholder="Поиск по адресу, названию здания, организации или УНП..."
                         autocomplete="off"
                     />
                     <button id="search-clear-btn" class="icon-btn hidden" title="Очистить поиск">✕</button>
@@ -39,10 +39,6 @@
 
             <!-- Сводная статистика в шапке -->
             <div class="stats-bar" id="header-stats">
-                <div class="stat-pill">
-                    <span class="stat-label">Участков:</span>
-                    <strong id="stat-parcels">—</strong>
-                </div>
                 <div class="stat-pill">
                     <span class="stat-label">Зданий:</span>
                     <strong id="stat-buildings">—</strong>
@@ -71,10 +67,7 @@
                 <button id="toggle-3d-btn" class="layer-toggle-btn active" title="Переключить 3D-экструзию зданий по этажности">
                     3D Здания
                 </button>
-                <button id="toggle-parcels-btn" class="layer-toggle-btn active" title="Показать/скрыть границы земельных участков">
-                    Земельные участки
-                </button>
-                <button id="toggle-catalog-btn" class="layer-toggle-btn" title="Открыть реестр опорных объектов РБ">
+                <button id="toggle-catalog-btn" class="layer-toggle-btn" title="Открыть реестр объектов">
                     Реестр объектов
                 </button>
             </div>
@@ -108,12 +101,8 @@
                         <span class="swatch swatch-university"></span>
                         <span>Университеты и наука</span>
                     </div>
-                    <div class="legend-item">
-                        <span class="swatch swatch-parcel"></span>
-                        <span>Границы кадастровых участков</span>
-                    </div>
                     <div class="legend-hint">
-                        Нажмите на <strong>любое здание</strong> на карте РБ для просмотра кадастрового паспорта и списка организаций внутри.
+                        Нажмите на <strong>любое здание</strong> на карте РБ для просмотра характеристик объекта и списка организаций внутри. Данные: OpenStreetMap, организации — OSM и ЕГР РБ.
                     </div>
                 </div>
             </div>
@@ -161,14 +150,6 @@
                 <div class="drawer-title-section">
                     <h2 id="b-title">Загрузка объекта...</h2>
                     <p id="b-address" class="drawer-address"></p>
-
-                    <div class="cadastral-num-box">
-                        <div>
-                            <span class="cad-label">Кадастровый номер строения:</span>
-                            <code id="b-cadastral-num">500000000000000000:С-1</code>
-                        </div>
-                        <button id="copy-cad-btn" class="copy-btn" title="Скопировать кадастровый номер">Копировать</button>
-                    </div>
                 </div>
 
                 <!-- Краткие метрики здания -->
@@ -193,7 +174,7 @@
                         Организации внутри <span id="tab-org-count" class="tab-counter">0</span>
                     </button>
                     <button class="tab-btn" data-tab="tab-passport">
-                        Кадастровый паспорт
+                        Паспорт объекта
                     </button>
                 </div>
 
@@ -213,13 +194,8 @@
                 <!-- Вкладка 2: Полный кадастровый паспорт здания и участка -->
                 <div id="tab-passport" class="tab-content hidden">
                     <div class="passport-section">
-                        <h3>Сведения ЕГРНИ о капитальном строении</h3>
+                        <h3>Характеристики объекта (OpenStreetMap)</h3>
                         <dl class="passport-dl" id="building-passport-dl"></dl>
-                    </div>
-
-                    <div class="passport-section" id="parcel-passport-section">
-                        <h3>Земельный участок (Кадастровый квартал)</h3>
-                        <dl class="passport-dl" id="parcel-passport-dl"></dl>
                     </div>
                 </div>
             </aside>

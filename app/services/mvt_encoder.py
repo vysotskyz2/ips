@@ -281,7 +281,6 @@ async def generate_postgis_mvt_tile(
             FROM (
                 SELECT
                     b.id,
-                    b.cadastral_number,
                     COALESCE(b.name, '') AS name,
                     b.building_type,
                     b.address_city,
@@ -303,7 +302,6 @@ async def generate_postgis_mvt_tile(
             FROM (
                 SELECT
                     b.id,
-                    b.cadastral_number,
                     COALESCE(b.name, b.address_street || ' ' || COALESCE(b.address_housenumber, '')) AS label,
                     b.building_type,
                     b.address_city,
@@ -437,12 +435,12 @@ async def generate_cadastral_mvt_tile(
                     "geometry_cmds": pt_cmds,
                     "properties": {
                         "id": b.id,
-                        "cadastral_number": b.cadastral_number,
                         "label": label,
                         "building_type": b.building_type,
                         "address_city": b.address_city,
                         "floors": b.floors,
                         "org_count": org_cnt,
+                        "data_source": "OpenStreetMap",
                     },
                 }
             )
@@ -460,7 +458,6 @@ async def generate_cadastral_mvt_tile(
                                 "geometry_cmds": cmds,
                                 "properties": {
                                     "id": b.id,
-                                    "cadastral_number": b.cadastral_number,
                                     "name": b.name or "",
                                     "building_type": b.building_type,
                                     "address_city": b.address_city,
@@ -469,6 +466,7 @@ async def generate_cadastral_mvt_tile(
                                     "floors": b.floors,
                                     "area_sqm": round(b.area_sqm, 1),
                                     "org_count": org_cnt,
+                                    "data_source": "OpenStreetMap",
                                 },
                             }
                         )

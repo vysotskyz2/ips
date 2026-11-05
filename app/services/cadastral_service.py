@@ -21,7 +21,6 @@ from app.models.parcel import CadastralParcel
 from app.schemas.building import (
     BuildingDetail,
     CadastralStats,
-    ParcelSummary,
     SearchResultItem,
 )
 from app.schemas.organization import OrganizationRead
@@ -678,8 +677,8 @@ async def enrich_building_from_osm_and_egr(
             if matched_osm_b and _is_poi_element(matched_osm_b["tags"]):
                 b_tags = matched_osm_b["tags"]
                 b_poi_name = _extract_poi_name(b_tags)
-                if b_poi_name and (b_poi_name.lower(), "1 этаж") not in existing_names_floors:
-                    cat, subcat, desc = _classify_osm_poi(b_tags)
+                if b_poi_name and (b_poi_name.lower(), "") not in existing_names_floors:
+                    cat, subcat, _ = _classify_osm_poi(b_tags)
                     session.add(
                         Organization(
                             osm_id=matched_osm_b["osm_id"],
@@ -687,10 +686,11 @@ async def enrich_building_from_osm_and_egr(
                             name=b_poi_name,
                             category=cat,
                             subcategory=subcat,
-                            description=desc,
+                            description=b_tags.get("description:ru")
+                            or b_tags.get("description"),
                             unp=b_tags.get("ref:vatin") or b_tags.get("ref:unp"),
-                            floor="1 этаж",
-                            opening_hours=b_tags.get("opening_hours") or "09:00-20:00",
+                            floor=None,
+                            opening_hours=b_tags.get("opening_hours"),
                             phone=b_tags.get("contact:phone") or b_tags.get("phone"),
                             website=b_tags.get("contact:website") or b_tags.get("website"),
                             email=b_tags.get("contact:email") or b_tags.get("email"),
@@ -699,7 +699,7 @@ async def enrich_building_from_osm_and_egr(
                             metadata_json={"source": "OpenStreetMap РБ"},
                         )
                     )
-                    existing_names_floors.add((b_poi_name.lower(), "1 этаж"))
+                    existing_names_floors.add((b_poi_name.lower(), ""))
                     added_total += 1
 
             for poi in strictly_matched_pois:
@@ -719,13 +719,13 @@ async def enrich_building_from_osm_and_egr(
                         else (lvl_s if "этаж" in lvl_s.lower() else f"Этаж {lvl_s}")
                     )
                 else:
-                    floor_label = "1 этаж"
+                    floor_label = None
 
-                dedup_key = (pname.lower(), floor_label.lower())
+                dedup_key = (pname.lower(), (floor_label or "").lower())
                 if dedup_key in existing_names_floors:
                     continue
 
-                cat, subcat, desc = _classify_osm_poi(ptags)
+                cat, subcat, _ = _classify_osm_poi(ptags)
                 room_val = ptags.get("addr:unit") or ptags.get("addr:door") or ptags.get("room")
                 if room_val and not str(room_val).lower().startswith(("пом", "оф", "каб", "пав")):
                     room_val = f"пом. {room_val}"
@@ -737,11 +737,11 @@ async def enrich_building_from_osm_and_egr(
                         name=pname,
                         category=cat,
                         subcategory=subcat,
-                        description=desc,
+                        description=ptags.get("description:ru") or ptags.get("description"),
                         unp=ptags.get("ref:vatin") or ptags.get("ref:unp"),
                         floor=floor_label,
                         room=room_val,
-                        opening_hours=ptags.get("opening_hours") or "09:00-21:00",
+                        opening_hours=ptags.get("opening_hours"),
                         phone=ptags.get("contact:phone") or ptags.get("phone"),
                         website=ptags.get("contact:website") or ptags.get("website"),
                         email=ptags.get("contact:email") or ptags.get("email"),
@@ -885,20 +885,15 @@ def _building_to_detail(building: Building) -> BuildingDetail:
     for o in orgs:
         cat_summary[o.category] = cat_summary.get(o.category, 0) + 1
 
-    parcel_summary = (
-        ParcelSummary.model_validate(building.parcel) if building.parcel is not None else None
-    )
-
     return BuildingDetail(
         id=building.id,
         osm_id=building.osm_id,
-        cadastral_number=building.cadastral_number,
-        inventory_number=building.inventory_number,
-        parcel_id=building.parcel_id,
+        cadastral_number=None,
+        inventory_number=None,
+        parcel_id=None,
         name=building.name,
         building_type=building.building_type,
-        purpose_label=building.purpose_label
-        or BUILDING_PURPOSE_LABELS.get(building.building_type, "Капитальное строение"),
+        purpose_label=None,
         address_region=building.address_region,
         address_city=building.address_city,
         address_street=building.address_street,
@@ -912,7 +907,7 @@ def _building_to_detail(building: Building) -> BuildingDetail:
         center_lat=building.center_lat,
         center_lon=building.center_lon,
         geometry=geometry,
-        parcel=parcel_summary,
+        parcel=None,
         organizations_count=len(orgs),
         categories_summary=cat_summary,
         organizations=orgs,
@@ -1099,7 +1094,7 @@ async def get_or_enrich_building_by_coords(
         b_bbox = (min(lons), min(lats), max(lons), max(lats))
         center_lon_val = round(chosen_osm_b["polygon"].centroid.x, 6)
         center_lat_val = round(chosen_osm_b["polygon"].centroid.y, 6)
-        b_area = max(compute_polygon_area_sqm(ring), 40.0)
+        b_area = compute_polygon_area_sqm(ring)
         building_geojson = json.dumps(
             {"type": "MultiPolygon", "coordinates": [[ring]]}, ensure_ascii=False
         )
@@ -1110,7 +1105,7 @@ async def get_or_enrich_building_by_coords(
         center_lon_val = round(g_shape.centroid.x, 6)
         center_lat_val = round(g_shape.centroid.y, 6)
         ring = single_hint_geom["coordinates"][0][0]
-        b_area = max(compute_polygon_area_sqm(ring), 45.0)
+        b_area = compute_polygon_area_sqm(ring)
         building_geojson = json.dumps(single_hint_geom, ensure_ascii=False)
     elif (hint_street and hint_housenumber) and not settings.enable_live_osm_enrichment:
         # Используется только в оффлайн-автотестах при передаче явного адреса и отключенном OSM
@@ -1127,7 +1122,7 @@ async def get_or_enrich_building_by_coords(
         raw_city=raw_city,
     )
 
-    parcel_cad, building_cad, inv_num = generate_cadastral_numbers(
+    _, building_cad, _ = generate_cadastral_numbers(
         center_lat_val,
         center_lon_val,
         osm_id_val,
@@ -1150,9 +1145,9 @@ async def get_or_enrich_building_by_coords(
 
     floors_str = b_tags.get("building:levels") or (str(hint_floors) if hint_floors else None)
     try:
-        floors_val = max(1, int(float(floors_str))) if floors_str else 3
+        floors_val = max(1, int(float(floors_str))) if floors_str else 0
     except ValueError:
-        floors_val = 3
+        floors_val = 0
 
     raw_street = (
         b_tags.get("addr:street:ru")
@@ -1168,51 +1163,14 @@ async def get_or_enrich_building_by_coords(
 
     street_val = raw_street
 
-    # Создаем или переиспользуем участок под зданием
-    parcel = (
-        await session.execute(
-            select(CadastralParcel).where(CadastralParcel.cadastral_number == parcel_cad)
-        )
-    ).scalar_one_or_none()
-    if parcel is None:
-        p_geojson, p_bbox, p_area = make_rect_polygon(
-            center_lon_val,
-            center_lat_val,
-            max(math.sqrt(b_area) * 1.5, 60.0),
-            max(math.sqrt(b_area) * 1.35, 48.0),
-            0.0,
-        )
-        parcel = CadastralParcel(
-            cadastral_number=parcel_cad,
-            name=f"Земельный участок ({street_val}, {housenumber_val})",
-            region=region_name,
-            district=b_tags.get("addr:district") or city_val,
-            land_use=raw_btype if raw_btype in ("retail", "commercial", "industrial") else "public",
-            purpose="Земли жилой и общественно-деловой застройки населенных пунктов РБ",
-            ownership_type="Государственная собственность",
-            area_sqm=p_area,
-            cadastral_value_byn=round(p_area * 420.0, 2),
-            center_lat=center_lat_val,
-            center_lon=center_lon_val,
-            min_lon=p_bbox[0],
-            min_lat=p_bbox[1],
-            max_lon=p_bbox[2],
-            max_lat=p_bbox[3],
-            geometry_geojson=p_geojson,
-        )
-        session.add(parcel)
-        await session.flush()
-
     building = Building(
         osm_id=osm_id_val,
         cadastral_number=building_cad,
-        inventory_number=inv_num,
-        parcel_id=parcel.id,
+        inventory_number=None,
+        parcel_id=None,
         name=b_name,
         building_type=raw_btype,
-        purpose_label=BUILDING_PURPOSE_LABELS.get(
-            raw_btype, "Капитальное строение (здание, сооружение)"
-        ),
+        purpose_label=None,
         address_region=region_name,
         address_city=city_val,
         address_street=street_val,
@@ -1222,7 +1180,7 @@ async def get_or_enrich_building_by_coords(
         year_built=int(b_tags["start_date"][:4])
         if b_tags.get("start_date", "")[:4].isdigit()
         else None,
-        wall_material=b_tags.get("building:material") or "Кирпич / Монолитный железобетон",
+        wall_material=b_tags.get("building:material"),
         area_sqm=b_area,
         center_lat=center_lat_val,
         center_lon=center_lon_val,
@@ -1272,23 +1230,18 @@ async def search_cadastral(
             filter(
                 None,
                 [
-                    b.cadastral_number,
-                    b.inventory_number,
                     b.name,
                     b.address_city,
                     b.address_street,
                     b.address_housenumber,
-                    b.purpose_label,
+                    b.building_type,
                 ],
             )
         ).lower()
 
         if not q_norm or q_norm in haystack_b:
             title = b.name or b.full_address
-            subtitle = (
-                f"{b.full_address} • Кадастровый № {b.cadastral_number} • "
-                f"Организаций внутри: {len(b.organizations)}"
-            )
+            subtitle = f"{b.full_address} • Организаций внутри: {len(b.organizations)}"
             results.append(
                 SearchResultItem(
                     result_type="building",
@@ -1296,7 +1249,7 @@ async def search_cadastral(
                     building_id=b.id,
                     title=title,
                     subtitle=subtitle,
-                    cadastral_number=b.cadastral_number,
+                    cadastral_number=None,
                     category=b.building_type,
                     city=b.address_city,
                     lat=b.center_lat,
@@ -1334,10 +1287,10 @@ async def search_cadastral(
                             building_id=b.id,
                             title=f"{org.name}{unp_tag}",
                             subtitle=(
-                                f"{org.category} ({org.floor or '1 этаж'}) — "
+                                f"{org.category} ({org.floor or 'этаж не указан'}) — "
                                 f"{b.name or b.full_address} ({b.full_address})"
                             ),
-                            cadastral_number=b.cadastral_number,
+                            cadastral_number=None,
                             category=org.category,
                             city=b.address_city,
                             lat=b.center_lat,
@@ -1412,10 +1365,9 @@ async def get_cadastral_geojson(
                 "geometry": geom,
                 "properties": {
                     "id": b.id,
-                    "cadastral_number": b.cadastral_number,
                     "name": b.name or b.full_address,
                     "building_type": b.building_type,
-                    "purpose_label": b.purpose_label,
+                    "data_source": "OpenStreetMap",
                     "address_city": b.address_city,
                     "address_street": b.address_street or "",
                     "address_housenumber": b.address_housenumber or "",

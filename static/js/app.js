@@ -20,7 +20,6 @@ let map = null;
 let currentBuilding = null;
 let selectedCategoryFilter = "ALL";
 let is3DEnabled = true;
-let isParcelsVisible = true;
 let hoverPopup = null;
 let allCatalogBuildings = [];
 
@@ -78,16 +77,8 @@ async function setupCadastralLayers() {
         maxzoom: 19,
     });
 
-    // 2. GeoJSON-источник земельных участков и зданий для мгновенного отображения и подсветки
-    const [parcelsGeoJSON, buildingsGeoJSON] = await Promise.all([
-        fetch("/api/v1/geojson/parcels").then((r) => r.json()),
-        fetch("/api/v1/geojson/buildings").then((r) => r.json()),
-    ]);
-
-    map.addSource("cadastral-parcels-geojson", {
-        type: "geojson",
-        data: parcelsGeoJSON,
-    });
+    // 2. GeoJSON-источник зданий для мгновенного отображения и подсветки
+    const buildingsGeoJSON = await fetch("/api/v1/geojson/buildings").then((r) => r.json());
 
     map.addSource("cadastral-buildings-geojson", {
         type: "geojson",
@@ -97,29 +88,6 @@ async function setupCadastralLayers() {
     map.addSource("selected-building-source", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
-    });
-
-    // Слой заливки земельных участков (кадастровых кварталов)
-    map.addLayer({
-        id: "cadastral-parcels-fill",
-        type: "fill",
-        source: "cadastral-parcels-geojson",
-        paint: {
-            "fill-color": "#f59e0b",
-            "fill-opacity": 0.14,
-        },
-    });
-
-    // Слой границ кадастровых участков
-    map.addLayer({
-        id: "cadastral-parcels-outline",
-        type: "line",
-        source: "cadastral-parcels-geojson",
-        paint: {
-            "line-color": "#f59e0b",
-            "line-width": 2,
-            "line-dasharray": [3, 2],
-        },
     });
 
     // Плоский 2D-слой контуров зданий для точного определения клика по основанию здания (без искажений 3D-экструзии)
@@ -228,14 +196,12 @@ async function setupCadastralLayers() {
                 const title = props.name || props.label || "Капитальное строение";
                 const addr = props.full_address || [props.address_street, props.address_housenumber].filter(Boolean).join(", ");
                 const orgCount = props.org_count ?? 0;
-                const cadNum = props.cadastral_number || "";
                 hoverPopup
                     .setLngLat(e.lngLat)
                     .setHTML(
                         `<div>
                             <strong>${escapeHtml(title)}</strong><br/>
                             ${addr ? `<span style="color:#cbd5e1">${escapeHtml(addr)}</span><br/>` : ""}
-                            <span style="color:#94a3b8">Кадастровый №: ${escapeHtml(cadNum)}</span><br/>
                             <span style="color:#34d399">Организаций внутри: <b>${orgCount}</b> (нажмите для просмотра)</span>
                         </div>`
                     )
@@ -373,13 +339,8 @@ async function inspectBuildingAtCoords(lat, lon, props = {}, geometry = null) {
 async function refreshGeoJSONSources() {
     if (!map) return;
     try {
-        const [parcelsGeoJSON, buildingsGeoJSON] = await Promise.all([
-            fetch("/api/v1/geojson/parcels").then((r) => r.json()),
-            fetch("/api/v1/geojson/buildings").then((r) => r.json()),
-        ]);
-        const pSrc = map.getSource("cadastral-parcels-geojson");
+        const buildingsGeoJSON = await fetch("/api/v1/geojson/buildings").then((r) => r.json());
         const bSrc = map.getSource("cadastral-buildings-geojson");
-        if (pSrc) pSrc.setData(parcelsGeoJSON);
         if (bSrc) bSrc.setData(buildingsGeoJSON);
     } catch (e) {
         console.debug("Обновление слоев пропущено:", e);
@@ -418,20 +379,20 @@ function renderBuildingDrawer(building, shouldFly = true) {
     }
 
     document.getElementById("b-type-badge").textContent =
-        BUILDING_TYPE_LABELS[building.building_type] || building.purpose_label || "Капитальное строение";
+        BUILDING_TYPE_LABELS[building.building_type] || "Капитальное строение";
     document.getElementById("b-city-badge").textContent = formatCityLabel(building.address_city);
     document.getElementById("b-title").textContent = building.name || building.full_address;
     document.getElementById("b-address").textContent = building.full_address;
-    document.getElementById("b-cadastral-num").textContent = building.cadastral_number;
 
     document.getElementById("b-metric-orgs").textContent = String(building.organizations_count);
-    document.getElementById("b-metric-floors").textContent = `${building.floors} эт.`;
+    document.getElementById("b-metric-floors").textContent =
+        building.floors > 0 ? `${building.floors} эт.` : "—";
     document.getElementById("b-metric-area").textContent = `${building.area_sqm.toLocaleString("ru-RU")} м²`;
     document.getElementById("tab-org-count").textContent = String(building.organizations_count);
 
     renderCategoryChips(building);
     renderOrganizationsList();
-    renderCadastralPassport(building);
+    renderObjectPassport(building);
 }
 
 function renderCategoryChips(building) {
@@ -502,7 +463,7 @@ function renderOrganizationsList() {
         const card = document.createElement("div");
         card.className = "org-card";
 
-        const floorRoom = [org.floor, org.room].filter(Boolean).join(", ") || "1 этаж";
+        const floorRoom = [org.floor, org.room].filter(Boolean).join(", ") || "этаж не указан";
         const metaSource = (org.metadata_json && org.metadata_json.source) || "OpenStreetMap / ЕГР РБ";
         const isEgr = metaSource.toLowerCase().includes("егр");
         const sourceTagHtml = isEgr
@@ -525,7 +486,7 @@ function renderOrganizationsList() {
             </div>
             ${org.description ? `<div class="org-desc">${escapeHtml(org.description)}</div>` : ""}
             <div class="org-details-grid">
-                <div class="org-detail-item">Режим: <strong>${escapeHtml(org.opening_hours || "09:00-18:00")}</strong></div>
+                <div class="org-detail-item">Режим: <strong>${escapeHtml(org.opening_hours || "—")}</strong></div>
                 <div class="org-detail-item">УНП: <strong>${escapeHtml(org.unp || "—")}</strong></div>
                 <div class="org-detail-item">Тел.: <strong>${escapeHtml(org.phone || "—")}</strong></div>
                 <div class="org-detail-item">Сайт: ${websiteHtml}</div>
@@ -535,53 +496,26 @@ function renderOrganizationsList() {
     });
 }
 
-function renderCadastralPassport(b) {
+function renderObjectPassport(b) {
     const bDl = document.getElementById("building-passport-dl");
     const rows = [
-        ["Кадастровый номер", b.cadastral_number],
-        ["Инвентарный № ЕГРНИ", b.inventory_number || "—"],
-        ["Наименование", b.name || "Капитальное строение"],
-        ["Назначение по реестру", b.purpose_label || BUILDING_TYPE_LABELS[b.building_type] || b.building_type],
-        ["Область / Регион", b.address_region || "Республика Беларусь"],
+        ["Наименование", b.name || "—"],
+        ["Тип строения (OSM)", b.building_type || "—"],
+        ["OSM ID", b.osm_id || "—"],
+        ["Область / Регион", b.address_region || "—"],
         ["Адрес объекта", b.full_address],
         ["Почтовый индекс", b.postal_code || "—"],
-        ["Количество этажей", `${b.floors}`],
+        ["Количество этажей", b.floors > 0 ? `${b.floors}` : "—"],
         ["Год постройки", b.year_built ? `${b.year_built} г.` : "—"],
-        ["Материал стен", b.wall_material || "Железобетон / Кирпич"],
-        ["Площадь застройки", `${b.area_sqm.toLocaleString("ru-RU")} м²`],
+        ["Материал стен", b.wall_material || "—"],
+        ["Площадь по контуру OSM", `${b.area_sqm.toLocaleString("ru-RU")} м²`],
         ["Координаты центра", `${b.center_lat.toFixed(5)}°, ${b.center_lon.toFixed(5)}°`],
+        ["Источник данных", "OpenStreetMap (ODbL)"],
     ];
 
     bDl.innerHTML = rows
         .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`)
         .join("");
-
-    const parcelSection = document.getElementById("parcel-passport-section");
-    const pDl = document.getElementById("parcel-passport-dl");
-
-    if (b.parcel) {
-        parcelSection.classList.remove("hidden");
-        const p = b.parcel;
-        const pRows = [
-            ["Кадастровый № участка", p.cadastral_number],
-            ["Наименование квартала", p.name || "—"],
-            ["Район / Регион", [p.region, p.district].filter(Boolean).join(", ") || "—"],
-            ["Целевое назначение", p.purpose || p.land_use],
-            ["Вид права", p.ownership_type || "Государственная собственность"],
-            ["Площадь участка", `${p.area_sqm.toLocaleString("ru-RU")} м²`],
-            [
-                "Кадастровая стоимость",
-                p.cadastral_value_byn
-                    ? `${p.cadastral_value_byn.toLocaleString("ru-RU")} BYN`
-                    : "По запросу в НКА",
-            ],
-        ];
-        pDl.innerHTML = pRows
-            .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`)
-            .join("");
-    } else {
-        parcelSection.classList.add("hidden");
-    }
 }
 
 async function loadHeaderStats() {
@@ -589,7 +523,6 @@ async function loadHeaderStats() {
         const resp = await fetch("/api/v1/stats");
         if (!resp.ok) return;
         const stats = await resp.json();
-        document.getElementById("stat-parcels").textContent = stats.total_parcels;
         document.getElementById("stat-buildings").textContent = stats.total_buildings;
         document.getElementById("stat-orgs").textContent = stats.total_organizations;
     } catch (e) {
@@ -667,22 +600,6 @@ function initUIHandlers() {
         }
     });
 
-    // Переключение видимости земельных участков
-    const btnParcels = document.getElementById("toggle-parcels-btn");
-    btnParcels.addEventListener("click", () => {
-        isParcelsVisible = !isParcelsVisible;
-        btnParcels.classList.toggle("active", isParcelsVisible);
-        const vis = isParcelsVisible ? "visible" : "none";
-        if (map) {
-            if (map.getLayer("cadastral-parcels-fill")) {
-                map.setLayoutProperty("cadastral-parcels-fill", "visibility", vis);
-            }
-            if (map.getLayer("cadastral-parcels-outline")) {
-                map.setLayoutProperty("cadastral-parcels-outline", "visibility", vis);
-            }
-        }
-    });
-
     // Панель реестра объектов
     const catalogPanel = document.getElementById("catalog-panel");
     const btnCatalog = document.getElementById("toggle-catalog-btn");
@@ -709,18 +626,6 @@ function initUIHandlers() {
                 features: [],
             });
         }
-    });
-
-    // Копирование кадастрового номера
-    document.getElementById("copy-cad-btn").addEventListener("click", async () => {
-        const num = document.getElementById("b-cadastral-num").textContent;
-        try {
-            await navigator.clipboard.writeText(num);
-            const btn = document.getElementById("copy-cad-btn");
-            const prev = btn.textContent;
-            btn.textContent = "Скопировано!";
-            setTimeout(() => (btn.textContent = prev), 1400);
-        } catch (_) {}
     });
 
     // Переключение вкладок внутри карточки здания

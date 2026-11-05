@@ -15,7 +15,6 @@ from app.database import AsyncSessionLocal, init_db, sync_postgis_geometries
 from app.models.building import Building
 from app.models.egr_record import EgrRecord
 from app.models.organization import Organization
-from app.models.parcel import CadastralParcel
 from app.services.address_matcher import (
     canonicalize_city_name,
     normalize_city,
@@ -24,7 +23,6 @@ from app.services.address_matcher import (
     translate_belarusian_street_to_ru,
 )
 from app.services.cadastral_service import (
-    BUILDING_PURPOSE_LABELS,
     _classify_osm_poi,
     _extract_poi_name,
     _is_poi_element,
@@ -41,7 +39,6 @@ from app.services.egr_service import (
     sync_egr_commercial_period,
     sync_egr_state_organizations,
 )
-from app.services.seed_data import make_rect_polygon
 
 # Ключевые деловые, торговые и административные зоны городов РБ для пакетной загрузки из OSM API v0.6
 BELARUS_HOTSPOT_BBOXES: list[tuple[str, tuple[float, float, float, float]]] = [
@@ -189,10 +186,8 @@ async def import_osm_and_egr_for_bbox(
         if building is None:
             lons = [c[0] for c in ring]
             lats = [c[1] for c in ring]
-            b_area = max(compute_polygon_area_sqm(ring), 40.0)
-            parcel_cad, building_cad, inv_num = generate_cadastral_numbers(
-                center_lat, center_lon, osm_id
-            )
+            b_area = compute_polygon_area_sqm(ring)
+            _, building_cad, _ = generate_cadastral_numbers(center_lat, center_lon, osm_id)
 
             raw_btype = tags.get("building", "commercial")
             if raw_btype in ("yes", "true", "building"):
@@ -200,33 +195,9 @@ async def import_osm_and_egr_for_bbox(
 
             lvl_str = tags.get("building:levels")
             try:
-                floors = max(1, int(float(lvl_str))) if lvl_str else 3
+                floors = max(1, int(float(lvl_str))) if lvl_str else 0
             except ValueError:
-                floors = 3
-
-            p_geojson, p_bbox, p_area = make_rect_polygon(
-                center_lon, center_lat, 65.0, 50.0, 0.0
-            )
-            parcel = CadastralParcel(
-                cadastral_number=parcel_cad,
-                name=f"Участок ({street_val or city_val}, {house_val or osm_id})",
-                region=region_name,
-                district=city_val,
-                land_use=raw_btype if raw_btype in ("retail", "commercial", "industrial") else "public",
-                purpose="Земли общественно-деловой и жилой застройки населенных пунктов РБ",
-                ownership_type="Государственная собственность",
-                area_sqm=p_area,
-                cadastral_value_byn=round(p_area * 410.0, 2),
-                center_lat=center_lat,
-                center_lon=center_lon,
-                min_lon=p_bbox[0],
-                min_lat=p_bbox[1],
-                max_lon=p_bbox[2],
-                max_lat=p_bbox[3],
-                geometry_geojson=p_geojson,
-            )
-            session.add(parcel)
-            await session.flush()
+                floors = 0
 
             b_geojson = json.dumps(
                 {"type": "MultiPolygon", "coordinates": [[ring]]}, ensure_ascii=False
@@ -234,11 +205,11 @@ async def import_osm_and_egr_for_bbox(
             building = Building(
                 osm_id=osm_id,
                 cadastral_number=building_cad,
-                inventory_number=inv_num,
-                parcel_id=parcel.id,
+                inventory_number=None,
+                parcel_id=None,
                 name=b_name,
                 building_type=raw_btype,
-                purpose_label=BUILDING_PURPOSE_LABELS.get(raw_btype, "Капитальное строение"),
+                purpose_label=None,
                 address_region=region_name,
                 address_city=city_val,
                 address_street=street_val,
@@ -248,7 +219,7 @@ async def import_osm_and_egr_for_bbox(
                 year_built=int(tags["start_date"][:4])
                 if tags.get("start_date", "")[:4].isdigit()
                 else None,
-                wall_material=tags.get("building:material") or "Кирпич / Монолитный железобетон",
+                wall_material=tags.get("building:material"),
                 area_sqm=b_area,
                 center_lat=center_lat,
                 center_lon=center_lon,

@@ -57,14 +57,16 @@ async def test_building_detail_with_organizations():
         assert resp.status_code == 200
         b = resp.json()
         assert b["id"] == 1
-        assert "cadastral_number" in b
+        assert b["cadastral_number"] is None
+        assert b["inventory_number"] is None
+        assert b["purpose_label"] is None
         assert b["organizations_count"] > 0
         assert len(b["organizations"]) == b["organizations_count"]
         first_org = b["organizations"][0]
         assert "name" in first_org
         assert "category" in first_org
         assert "floor" in first_org
-        assert b["parcel"] is not None
+        assert b["parcel"] is None
 
 
 @pytest.mark.asyncio
@@ -84,7 +86,7 @@ async def test_mvt_vector_tile_generation():
 
 
 @pytest.mark.asyncio
-async def test_search_by_organization_and_cadastral_number():
+async def test_search_by_organization_and_address():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Поиск по названию организации внутри здания
@@ -93,13 +95,14 @@ async def test_search_by_organization_and_cadastral_number():
         items_org = resp_org.json()
         assert len(items_org) >= 1
         assert any(i["result_type"] == "organization" for i in items_org)
+        assert all(i["cadastral_number"] is None for i in items_org)
 
-        # Поиск по кадастровому номеру
-        resp_cad = await client.get("/api/v1/search", params={"q": "500000000001004512"})
-        assert resp_cad.status_code == 200
-        items_cad = resp_cad.json()
-        assert len(items_cad) >= 1
-        assert items_cad[0]["building_id"] == 1
+        # Поиск по адресу здания (внутренние кадастровые номера больше не выдаются)
+        resp_addr = await client.get("/api/v1/search", params={"q": "Независимости"})
+        assert resp_addr.status_code == 200
+        items_addr = resp_addr.json()
+        assert len(items_addr) >= 1
+        assert any(i["result_type"] == "building" for i in items_addr)
 
 
 @pytest.mark.asyncio
@@ -134,7 +137,10 @@ async def test_inspect_any_building_on_map():
         data_new = resp_new.json()
         assert data_new["address_city"] == "Минск"
         assert data_new["address_housenumber"] == "99"
-        assert data_new["cadastral_number"].startswith("5000000000")
+        assert data_new["cadastral_number"] is None
+        assert data_new["inventory_number"] is None
+        assert data_new["parcel"] is None
+        assert data_new["purpose_label"] is None
 
         # Удаляем тестовое здание после проверки
         from sqlalchemy import delete
