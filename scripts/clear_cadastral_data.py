@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import settings
 from app.database import AsyncSessionLocal, init_db
+from app.models.area_journal import AreaJournalEntry
 from app.models.building import Building
 from app.models.egr_record import EgrRecord
 from app.models.organization import Organization
@@ -31,18 +32,23 @@ async def main() -> None:
         before_orgs = (
             await session.execute(select(func.count(Organization.id)))
         ).scalar_one()
+        before_journal = (
+            await session.execute(select(func.count(AreaJournalEntry.id)))
+        ).scalar_one()
         egr_count = (await session.execute(select(func.count(EgrRecord.id)))).scalar_one()
 
         await session.execute(delete(Organization))
         await session.execute(delete(Building))
         await session.execute(delete(CadastralParcel))
+        await session.execute(delete(AreaJournalEntry))
 
         if not settings.is_postgres:
             try:
                 await session.execute(
                     text(
                         "DELETE FROM sqlite_sequence "
-                        "WHERE name IN ('organizations', 'buildings', 'cadastral_parcels')"
+                        "WHERE name IN "
+                        "('organizations', 'buildings', 'cadastral_parcels', 'area_journal_entries')"
                     )
                 )
             except Exception:
@@ -50,10 +56,11 @@ async def main() -> None:
         await session.commit()
 
         print(
-            "Очистка кадастровых слоёв завершена:\n"
+            "Очистка данных проекта завершена:\n"
             f"  - Удалено зданий: {before_buildings}\n"
             f"  - Удалено участков: {before_parcels}\n"
             f"  - Удалено организаций: {before_orgs}\n"
+            f"  - Удалено записей журнала областей: {before_journal}\n"
             f"  - Записей ЕГР сохранено для обогащения: {egr_count}"
         )
 

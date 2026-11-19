@@ -35,7 +35,7 @@
   ```powershell
   uv run python scripts/sync_egr_and_osm.py
   ```
-* **Очистка отображаемых зданий/участков/организаций (записи ЕГР сохраняются):**
+* **Очистка отображаемых зданий/участков/организаций и журнала областей (записи ЕГР сохраняются):**
   ```powershell
   uv run python scripts/clear_cadastral_data.py
   ```
@@ -108,7 +108,7 @@ D:\IPS\
 │   ├── backfill_districts.py       # Пересчёт address_district у сохранённых зданий
 │   ├── import_osm_to_postgis.py    # Скрипт импорта из .osm.pbf (pyosmium) или онлайн
 │   ├── download_belarus_osm.py     # Скачивание belarus-latest.osm.pbf с Geofabrik
-│   ├── clear_cadastral_data.py     # Очистка отображаемых зданий/участков/организаций (ЕГР сохраняется)
+│   ├── clear_cadastral_data.py     # Очистка отображаемых зданий/участков/организаций и журнала (ЕГР сохраняется)
 │   ├── sanitize_synthetic_data.py  # Удаление синтетических полей/участков у уже сохранённых зданий
 │   └── seed_belarus_data.py        # Демонстрационная инициализация (не использовать для реальных данных)
 ├── static/
