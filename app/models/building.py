@@ -29,7 +29,7 @@ class Building(Base):
 
     name: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     building_type: Mapped[str] = mapped_column(
-        String(64), nullable=False, default="commercial", index=True
+        String(64), nullable=False, default="building", index=True
     )
     purpose_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -75,12 +75,13 @@ class Building(Base):
         if self.address_city:
             city = self.address_city.strip()
             is_region_or_district = city.lower().endswith(("область", "район"))
-            if city.startswith(("г.", "г ")) or is_region_or_district:
-                parts.append(city)
-            else:
-                parts.append(f"г. {city}")
+            if city and city != "—" and not is_region_or_district:
+                if city.startswith(("г.", "г ")):
+                    parts.append(city)
+                else:
+                    parts.append(f"г. {city}")
         if self.address_street:
             parts.append(self.address_street)
         if self.address_housenumber:
             parts.append(f"д. {self.address_housenumber}")
-        return ", ".join(parts) if parts else "Адрес не указан"
+        return ", ".join(parts) if parts else "—"

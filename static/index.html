@@ -15,7 +15,6 @@
                 <div class="brand-emblem" title="Кадастровая карта Республики Беларусь">РБ</div>
                 <div class="brand-titles">
                     <h1>Кадастровая карта Республики Беларусь</h1>
-                    <span class="brand-subtitle">Здания и организации на данных OpenStreetMap и ЕГР РБ</span>
                 </div>
             </div>
 
@@ -73,6 +72,18 @@
                 <button id="toggle-catalog-btn" class="layer-toggle-btn" title="Открыть реестр объектов">
                     Реестр объектов
                 </button>
+                <div class="area-draw-controls">
+                    <span class="toolbar-label">Область:</span>
+                    <button id="area-rectangle-btn" type="button" class="layer-toggle-btn area-mode-btn" data-area-mode="rectangle" title="Протянуть прямоугольник на карте">
+                        Прямоугольник
+                    </button>
+                    <button id="area-polygon-btn" type="button" class="layer-toggle-btn area-mode-btn" data-area-mode="polygon" title="Кликайте по вершинам, двойной клик или Enter — завершить">
+                        Полигон
+                    </button>
+                    <button id="cancel-area-btn" type="button" class="layer-toggle-btn area-cancel-btn" title="Отменить выделение и закрыть аналитику">
+                        Отмена
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -117,7 +128,7 @@
                         <span>Города областного подчинения</span>
                     </div>
                     <div class="legend-hint">
-                        Нажмите на <strong>любое здание</strong> на карте РБ для просмотра характеристик объекта и списка организаций внутри. Данные: OpenStreetMap, организации — OSM и ЕГР РБ. Границы районов: OpenStreetMap (ODbL).
+                        Нажмите на <strong>любое здание</strong> на карте РБ для просмотра характеристик объекта и списка организаций внутри.
                     </div>
                 </div>
             </div>
@@ -128,6 +139,21 @@
                 <span class="status-sep">|</span>
                 <span id="map-zoom-indicator">Масштаб: Z6.6</span>
             </div>
+
+            <!-- Подсказка режима выделения области -->
+            <div id="area-draw-hint" class="area-draw-hint hidden"></div>
+
+            <!-- Панель статистики выделенной области -->
+            <aside id="area-stats-panel" class="area-stats-panel hidden">
+                <div class="panel-header">
+                    <div>
+                        <h2>Аналитика области</h2>
+                        <p class="panel-sub" id="area-stats-sub">Выделите область на карте</p>
+                    </div>
+                    <button id="close-area-stats-btn" class="icon-btn" title="Закрыть аналитику">✕</button>
+                </div>
+                <div id="area-stats-body" class="area-stats-body"></div>
+            </aside>
 
             <!-- Выдвижная панель реестра всех объектов (слева) -->
             <aside id="catalog-panel" class="catalog-panel hidden">

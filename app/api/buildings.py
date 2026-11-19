@@ -23,7 +23,6 @@ class BuildingInspectRequest(BaseModel):
     street: str | None = None
     housenumber: str | None = None
     city: str | None = None
-    floors: int | None = None
     building_type: str | None = None
     osm_id: int | None = None
     geometry: dict[str, Any] | None = None
@@ -41,7 +40,6 @@ async def get_building_by_coordinates(
     street: str | None = Query(default=None),
     housenumber: str | None = Query(default=None),
     city: str | None = Query(default=None),
-    floors: int | None = Query(default=None),
     building_type: str | None = Query(default=None),
     osm_id: int | None = Query(default=None),
     session: AsyncSession = Depends(get_db),
@@ -54,7 +52,6 @@ async def get_building_by_coordinates(
         hint_street=street,
         hint_housenumber=housenumber,
         hint_city=city,
-        hint_floors=floors,
         hint_type=building_type,
         hint_osm_id=osm_id,
     )
@@ -83,7 +80,6 @@ async def inspect_building_on_map(
         hint_street=payload.street,
         hint_housenumber=payload.housenumber,
         hint_city=payload.city,
-        hint_floors=payload.floors,
         hint_type=payload.building_type,
         hint_osm_id=payload.osm_id,
         hint_geometry=payload.geometry,

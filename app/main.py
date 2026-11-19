@@ -9,6 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.analytics import router as analytics_router
 from app.api.buildings import router as buildings_router
 from app.api.search import router as search_router
 from app.api.tiles import router as tiles_router
@@ -48,6 +49,7 @@ app.add_middleware(
 app.include_router(tiles_router, prefix="/api/v1")
 app.include_router(buildings_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1")
+app.include_router(analytics_router, prefix="/api/v1")
 
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

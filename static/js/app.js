@@ -25,6 +25,16 @@ let hoverPopup = null;
 let districtPopup = null;
 let allCatalogBuildings = [];
 
+let isAreaDrawing = false;
+let areaDrawMode = null;
+let areaRectStart = null;
+let areaRectEnd = null;
+let areaPolygonVertices = [];
+let areaCursorPoint = null;
+let areaPreviousPitch = 45;
+let areaIgnoreClickUntil = 0;
+let areaImportRequestId = 0;
+
 document.addEventListener("DOMContentLoaded", async () => {
     initMap();
     initUIHandlers();
@@ -254,6 +264,35 @@ async function setupCadastralLayers() {
         },
     });
 
+    // Источник и слои для выделенной пользователем области (прямоугольник/полигон)
+    map.addSource("area-selection-source", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+    });
+
+    map.addLayer({
+        id: "area-selection-fill",
+        type: "fill",
+        source: "area-selection-source",
+        paint: {
+            "fill-color": "#22d3ee",
+            "fill-opacity": 0.16,
+        },
+    });
+
+    map.addLayer({
+        id: "area-selection-outline",
+        type: "line",
+        source: "area-selection-source",
+        paint: {
+            "line-color": "#22d3ee",
+            "line-width": 2.5,
+            "line-dasharray": [1.5, 1],
+        },
+    });
+
+    registerAreaDrawingEvents();
+
     // Слой точечных маркеров с числом организаций внутри здания (из MVT векторного тайла)
     map.addLayer({
         id: "cadastral-markers-circle",
@@ -363,6 +402,11 @@ async function setupCadastralLayers() {
     ].filter((layerId) => map.getLayer(layerId));
 
     map.on("mousemove", (e) => {
+        if (isAreaDrawing) {
+            districtPopup.remove();
+            hoverPopup.remove();
+            return;
+        }
         if (!districtPopup) return;
         const buildingHit = map.queryRenderedFeatures(e.point, {
             layers: ["cadastral-buildings-footprint", "cadastral-markers-circle"],
@@ -404,6 +448,7 @@ async function setupCadastralLayers() {
     const interactiveLayers = ["cadastral-buildings-footprint", "cadastral-markers-circle"];
     interactiveLayers.forEach((layerId) => {
         map.on("mouseenter", layerId, (e) => {
+            if (isAreaDrawing) return;
             map.getCanvas().style.cursor = "pointer";
             if (e.features && e.features.length > 0) {
                 const props = e.features[0].properties;
@@ -424,6 +469,7 @@ async function setupCadastralLayers() {
         });
 
         map.on("mouseleave", layerId, () => {
+            if (isAreaDrawing) return;
             map.getCanvas().style.cursor = "";
             hoverPopup.remove();
         });
@@ -434,6 +480,7 @@ async function setupCadastralLayers() {
     // 2) Только на обзорных масштабах (< 15) проверяем клик по точечному маркеру
     // 3) Если кликнули по ЛЮБОМУ другому зданию на карте Беларуси — инспектируем его точно по координатам клика!
     map.on("click", async (e) => {
+        if (isAreaDrawing || Date.now() < areaIgnoreClickUntil) return;
         const clickLon = e.lngLat.lng;
         const clickLat = e.lngLat.lat;
 
@@ -509,6 +556,413 @@ function isPointInsideGeoJSON(lon, lat, geometry) {
     return false;
 }
 
+function setAreaSelectionGeometry(geometry) {
+    if (!map || !map.getSource("area-selection-source")) return;
+    map.getSource("area-selection-source").setData(
+        geometry
+            ? {
+                  type: "FeatureCollection",
+                  features: [{ type: "Feature", geometry, properties: {} }],
+              }
+            : { type: "FeatureCollection", features: [] }
+    );
+}
+
+function rectangleAreaGeometry(start, end) {
+    const [x1, y1] = start;
+    const [x2, y2] = end;
+    return {
+        type: "Polygon",
+        coordinates: [[[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]]],
+    };
+}
+
+function buildAreaPreviewGeometry() {
+    if (areaDrawMode === "rectangle" && areaRectStart && areaRectEnd) {
+        return rectangleAreaGeometry(areaRectStart, areaRectEnd);
+    }
+    if (areaDrawMode === "polygon") {
+        const points = areaPolygonVertices.slice();
+        if (areaCursorPoint) points.push(areaCursorPoint);
+        if (points.length < 2) return null;
+        if (points.length < 3) {
+            return { type: "LineString", coordinates: points };
+        }
+        const ring = points.map((p) => [p[0], p[1]]);
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (first[0] !== last[0] || first[1] !== last[1]) {
+            ring.push([first[0], first[1]]);
+        }
+        return { type: "Polygon", coordinates: [ring] };
+    }
+    return null;
+}
+
+function updateAreaPreview() {
+    setAreaSelectionGeometry(buildAreaPreviewGeometry());
+}
+
+function normalizedPolygonVertices() {
+    const vertices = [];
+    for (const point of areaPolygonVertices) {
+        const prev = vertices[vertices.length - 1];
+        if (!prev || Math.abs(prev[0] - point[0]) > 1e-10 || Math.abs(prev[1] - point[1]) > 1e-10) {
+            vertices.push(point);
+        }
+    }
+    if (vertices.length > 1) {
+        const first = vertices[0];
+        const last = vertices[vertices.length - 1];
+        if (Math.abs(first[0] - last[0]) < 1e-10 && Math.abs(first[1] - last[1]) < 1e-10) {
+            vertices.pop();
+        }
+    }
+    return vertices;
+}
+
+function setAreaModeActive(mode) {
+    document.querySelectorAll("[data-area-mode]").forEach((btn) => {
+        btn.classList.toggle("active", Boolean(mode) && btn.dataset.areaMode === mode);
+    });
+}
+
+function setAreaModeButtonsDisabled(disabled) {
+    document.querySelectorAll("[data-area-mode]").forEach((btn) => {
+        btn.disabled = disabled;
+    });
+}
+
+function showAreaHint(text) {    const hint = document.getElementById("area-draw-hint");
+    if (!hint) return;
+    hint.textContent = text;
+    hint.classList.remove("hidden");
+}
+
+function hideAreaHint() {
+    const hint = document.getElementById("area-draw-hint");
+    if (hint) hint.classList.add("hidden");
+}
+
+function restoreAreaMapInteractions() {
+    if (!map) return;
+    map.dragPan.enable();
+    map.boxZoom.enable();
+    map.doubleClickZoom.enable();
+    map.getCanvas().style.cursor = "";
+}
+
+function startAreaDrawing(mode) {
+    if (!map || isAreaDrawing) return;
+    areaImportRequestId += 1;
+    isAreaDrawing = true;
+    areaDrawMode = mode;
+    areaPreviousPitch = map.getPitch();
+    areaRectStart = null;
+    areaRectEnd = null;
+    areaPolygonVertices = [];
+    areaCursorPoint = null;
+    areaIgnoreClickUntil = 0;
+
+    map.dragPan.disable();
+    map.boxZoom.disable();
+    map.doubleClickZoom.disable();
+    map.easeTo({ pitch: 0, duration: 300 });
+    map.getCanvas().style.cursor = "crosshair";
+
+    setAreaSelectionGeometry(null);
+    document.getElementById("building-drawer").classList.add("hidden");
+    document.getElementById("area-stats-panel").classList.add("hidden");
+    setAreaModeActive(mode);
+    showAreaHint(
+        mode === "rectangle"
+            ? "Протяните мышью прямоугольник на карте. Esc — отмена."
+            : "Кликайте по вершинам полигона. Двойной клик или Enter — завершить, Esc — отмена."
+    );
+}
+
+function cancelAreaDrawing() {
+    areaImportRequestId += 1;
+    const wasDrawing = isAreaDrawing;
+    isAreaDrawing = false;
+    areaDrawMode = null;
+    areaRectStart = null;
+    areaRectEnd = null;
+    areaPolygonVertices = [];
+    areaCursorPoint = null;
+    restoreAreaMapInteractions();
+    if (wasDrawing && map) map.easeTo({ pitch: areaPreviousPitch, duration: 300 });
+    setAreaSelectionGeometry(null);
+    hideAreaHint();
+    setAreaModeActive(null);
+}
+
+function finishAreaDrawing(geometry) {
+    if (!geometry) {
+        cancelAreaDrawing();
+        return;
+    }
+    isAreaDrawing = false;
+    areaDrawMode = null;
+    areaRectStart = null;
+    areaRectEnd = null;
+    areaPolygonVertices = [];
+    areaCursorPoint = null;
+    areaIgnoreClickUntil = Date.now() + 450;
+    restoreAreaMapInteractions();
+    if (map) map.easeTo({ pitch: areaPreviousPitch, duration: 300 });
+    setAreaSelectionGeometry(geometry);
+    hideAreaHint();
+    setAreaModeActive(null);
+    runAreaImport(geometry);
+}
+
+function finishPolygonDrawing() {
+    const vertices = normalizedPolygonVertices();
+    if (vertices.length < 3) {
+        showAreaHint("Для полигона нужно минимум 3 вершины. Продолжайте кликать по карте.");
+        return;
+    }
+    const ring = vertices.map((p) => [p[0], p[1]]);
+    ring.push([vertices[0][0], vertices[0][1]]);
+    finishAreaDrawing({ type: "Polygon", coordinates: [ring] });
+}
+
+function registerAreaDrawingEvents() {
+    if (!map) return;
+
+    map.on("mousedown", (e) => {
+        if (!isAreaDrawing || areaDrawMode !== "rectangle") return;
+        areaRectStart = [e.lngLat.lng, e.lngLat.lat];
+        areaRectEnd = [e.lngLat.lng, e.lngLat.lat];
+        updateAreaPreview();
+    });
+
+    map.on("mousemove", (e) => {
+        if (!isAreaDrawing) return;
+        if (areaDrawMode === "rectangle" && areaRectStart) {
+            areaRectEnd = [e.lngLat.lng, e.lngLat.lat];
+            updateAreaPreview();
+        } else if (areaDrawMode === "polygon" && areaPolygonVertices.length) {
+            areaCursorPoint = [e.lngLat.lng, e.lngLat.lat];
+            updateAreaPreview();
+        }
+    });
+
+    map.on("mouseup", (e) => {
+        if (!isAreaDrawing || areaDrawMode !== "rectangle" || !areaRectStart) return;
+        areaRectEnd = [e.lngLat.lng, e.lngLat.lat];
+        const width = Math.abs(areaRectEnd[0] - areaRectStart[0]);
+        const height = Math.abs(areaRectEnd[1] - areaRectStart[1]);
+        if (width < 1e-5 || height < 1e-5) {
+            showAreaHint("Слишком маленькая область. Протяните прямоугольник большего размера.");
+            areaRectStart = null;
+            areaRectEnd = null;
+            return;
+        }
+        finishAreaDrawing(rectangleAreaGeometry(areaRectStart, areaRectEnd));
+    });
+
+    map.on("click", (e) => {
+        if (!isAreaDrawing || areaDrawMode !== "polygon") return;
+        areaPolygonVertices.push([e.lngLat.lng, e.lngLat.lat]);
+        areaCursorPoint = null;
+        updateAreaPreview();
+    });
+
+    map.on("dblclick", (e) => {
+        if (!isAreaDrawing || areaDrawMode !== "polygon") return;
+        if (e.preventDefault) e.preventDefault();
+        finishPolygonDrawing();
+    });
+
+    document.addEventListener("keydown", (e) => {
+        if (!isAreaDrawing) return;
+        if (e.key === "Enter" && areaDrawMode === "polygon") {
+            e.preventDefault();
+            finishPolygonDrawing();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancelAreaDrawing();
+        }
+    });
+}
+
+async function runAreaImport(geometry) {
+    const panel = document.getElementById("area-stats-panel");
+    const sub = document.getElementById("area-stats-sub");
+    const body = document.getElementById("area-stats-body");
+    const requestId = ++areaImportRequestId;
+
+    document.getElementById("building-drawer").classList.add("hidden");
+    panel.classList.remove("hidden");
+    sub.textContent = "Импорт объектов и расчёт статистики...";
+    body.innerHTML = '<div class="area-stats-loading">Загрузка данных OpenStreetMap и ЕГР РБ...</div>';
+    setAreaModeButtonsDisabled(true);
+
+    try {
+        const resp = await fetch("/api/v1/areas/import-and-stats", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ geometry }),
+        });
+        if (requestId !== areaImportRequestId) return;
+        if (!resp.ok) {
+            let message = "Не удалось выполнить импорт области";
+            try {
+                const errorPayload = await resp.json();
+                if (errorPayload && errorPayload.detail) {
+                    message =
+                        typeof errorPayload.detail === "string"
+                            ? errorPayload.detail
+                            : JSON.stringify(errorPayload.detail);
+                }
+            } catch (err) {
+                console.debug("Ответ с ошибкой не является JSON:", err);
+            }
+            if (requestId !== areaImportRequestId) return;
+            renderAreaError(message);
+            return;
+        }
+        const stats = await resp.json();
+        if (requestId !== areaImportRequestId) return;
+        renderAreaStats(stats);
+        await refreshGeoJSONSources();
+        await loadHeaderStats();
+        await loadCatalogBuildings();
+    } catch (err) {
+        console.error("Ошибка импорта выделенной области:", err);
+        if (requestId === areaImportRequestId) {
+            renderAreaError(
+                "Сетевая ошибка при импорте области. Проверьте соединение и повторите попытку."
+            );
+        }
+    } finally {
+        setAreaModeButtonsDisabled(false);
+    }
+}
+
+function renderAreaError(message) {
+    document.getElementById("area-stats-panel").classList.remove("hidden");
+    document.getElementById("area-stats-sub").textContent = "Ошибка импорта";
+    document.getElementById("area-stats-body").innerHTML =
+        `<div class="area-warning">${escapeHtml(message)}</div>`;
+}
+
+function formatNumber(value) {
+    return Number(value || 0).toLocaleString("ru-RU");
+}
+
+function formatAreaKm2(value) {
+    return Number(value || 0).toLocaleString("ru-RU", { maximumFractionDigits: 3 });
+}
+
+function renderAreaDict(title, data) {
+    const entries = Object.entries(data || {}).sort((a, b) => Number(b[1]) - Number(a[1]));
+    const content = entries.length
+        ? `<div class="area-list">${entries
+              .map(
+                  ([key, value]) =>
+                      `<div class="area-list-row"><span>${escapeHtml(key)}</span><strong>${formatNumber(
+                          value
+                      )}</strong></div>`
+              )
+              .join("")}</div>`
+        : '<div class="area-empty">Нет данных</div>';
+    return `<section class="area-section"><h3>${escapeHtml(title)}</h3>${content}</section>`;
+}
+
+function renderAreaKv(rows) {
+    return rows
+        .map(
+            ([label, value]) =>
+                `<div class="area-kv"><span>${escapeHtml(label)}</span><strong>${escapeHtml(
+                    String(value)
+                )}</strong></div>`
+        )
+        .join("");
+}
+
+function renderAreaStats(stats) {
+    const counters = stats.import_stats || {};
+    const scopeLabel = stats.data_scope === "full" ? "полные данные" : "частичные данные";
+    document.getElementById("area-stats-sub").textContent =
+        `${formatAreaKm2(stats.area_km2)} км² • ${scopeLabel}`;
+
+    const warnings = (stats.warnings || [])
+        .map((warning) => `<div class="area-warning">${escapeHtml(warning)}</div>`)
+        .join("");
+
+    const body = document.getElementById("area-stats-body");
+    body.innerHTML = `
+        <div class="area-stat-grid">
+            <div class="area-stat-card"><span>Площадь области</span><strong>${formatAreaKm2(
+                stats.area_km2
+            )} км²</strong></div>
+            <div class="area-stat-card"><span>Зданий в БД</span><strong>${formatNumber(
+                stats.buildings_total
+            )}</strong></div>
+            <div class="area-stat-card"><span>Организаций</span><strong>${formatNumber(
+                stats.organizations_total
+            )}</strong></div>
+            <div class="area-stat-card"><span>ЕГР: действующие</span><strong>${formatNumber(
+                stats.egr_active
+            )}</strong></div>
+        </div>
+        ${warnings ? `<div class="area-warning-list">${warnings}</div>` : ""}
+        <section class="area-section">
+            <h3>Импорт из OpenStreetMap</h3>
+            ${renderAreaKv([
+                ["Добавлено зданий", formatNumber(counters.buildings_added)],
+                ["Обновлено зданий", formatNumber(counters.buildings_updated)],
+                ["Добавлено организаций", formatNumber(counters.organizations_added)],
+                ["Запрошено тайлов OSM", formatNumber(counters.tiles_requested)],
+                ["Успешно загружено тайлов", formatNumber(counters.tiles_ok)],
+                ["Ошибок загрузки тайлов", formatNumber(counters.tiles_failed)],
+            ])}
+        </section>
+        <section class="area-section">
+            <h3>Здания</h3>
+            ${renderAreaKv([
+                ["Всего зданий", formatNumber(stats.buildings_total)],
+                ["С организациями", formatNumber(stats.buildings_with_organizations)],
+                ["Без организаций", formatNumber(stats.buildings_without_organizations)],
+            ])}
+            <div class="area-list">
+                ${Object.entries(stats.buildings_by_type || {})
+                    .sort((a, b) => Number(b[1]) - Number(a[1]))
+                    .map(
+                        ([key, value]) =>
+                            `<div class="area-list-row"><span>${escapeHtml(
+                                key
+                            )}</span><strong>${formatNumber(value)}</strong></div>`
+                    )
+                    .join("")}
+            </div>
+        </section>
+        <section class="area-section">
+            <h3>Организации по источникам</h3>
+            ${renderAreaKv([
+                ["Всего организаций", formatNumber(stats.organizations_total)],
+                ["OpenStreetMap", formatNumber(stats.organizations_osm)],
+                ["ЕГР РБ", formatNumber(stats.organizations_egr)],
+                ["Прочие источники", formatNumber(stats.organizations_other)],
+            ])}
+        </section>
+        ${renderAreaDict("Организации по категориям", stats.organizations_by_category)}
+        <section class="area-section">
+            <h3>Статусы ЕГР РБ</h3>
+            ${renderAreaKv([
+                ["Действующие", formatNumber(stats.egr_active)],
+                ["Исключённые", formatNumber(stats.egr_excluded)],
+                ["Прочие статусы", formatNumber(stats.egr_other)],
+            ])}
+        </section>
+        ${renderAreaDict("Здания по городам", stats.buildings_by_city)}
+        ${renderAreaDict("Здания по районам", stats.buildings_by_district)}
+    `;
+}
+
 async function selectBuildingById(buildingId, flyToBuilding = true) {
     try {
         const resp = await fetch(`/api/v1/buildings/${buildingId}`);
@@ -529,7 +983,6 @@ async function inspectBuildingAtCoords(lat, lon, props = {}, geometry = null) {
             street: props["addr:street"] || props.street || null,
             housenumber: props["addr:housenumber"] || props.housenumber || null,
             city: props["addr:city"] || props.city || null,
-            floors: props.render_height ? Math.max(1, Math.round(Number(props.render_height) / 3.5)) : null,
             building_type: props.building || props.class || null,
             osm_id: null,
             geometry: geometry,
@@ -565,6 +1018,9 @@ function renderBuildingDrawer(building, shouldFly = true) {
     currentBuilding = building;
     selectedCategoryFilter = "ALL";
     document.getElementById("inner-org-search").value = "";
+
+    const areaPanel = document.getElementById("area-stats-panel");
+    if (areaPanel) areaPanel.classList.add("hidden");
 
     const drawer = document.getElementById("building-drawer");
     drawer.classList.remove("hidden");
@@ -870,6 +1326,23 @@ function initUIHandlers() {
         loadCatalogBuildings(e.target.value);
     });
 
+    // Выделение области и аналитика
+    document.querySelectorAll("[data-area-mode]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            startAreaDrawing(btn.dataset.areaMode);
+        });
+    });
+
+    document.getElementById("cancel-area-btn").addEventListener("click", () => {
+        document.getElementById("area-stats-panel").classList.add("hidden");
+        cancelAreaDrawing();
+    });
+
+    document.getElementById("close-area-stats-btn").addEventListener("click", () => {
+        document.getElementById("area-stats-panel").classList.add("hidden");
+        cancelAreaDrawing();
+    });
+
     // Закрытие карточки здания
     document.getElementById("close-drawer-btn").addEventListener("click", () => {
         document.getElementById("building-drawer").classList.add("hidden");
@@ -991,8 +1464,11 @@ async function executeGlobalSearch(query) {
 
 function formatCityLabel(city) {
     const value = String(city || "").trim();
-    if (!value) return "Республика Беларусь";
-    if (/^(г\.|город)\s/i.test(value) || /(область|район)$/i.test(value)) {
+    if (!value || value === "—" || value === "-") return "—";
+    const lower = value.toLowerCase();
+    if (lower === "республика беларусь" || lower === "рб" || lower === "беларусь") return "—";
+    if (/(область|район)$/i.test(value)) return "—";
+    if (/^(г\.|город)\s/i.test(value)) {
         return value;
     }
     return `г. ${value}`;

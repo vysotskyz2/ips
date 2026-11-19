@@ -176,7 +176,7 @@ CANONICAL_CITY_DISPLAY: dict[str, str] = {
 }
 
 
-def canonicalize_city_name(city: str | None, default_city: str = "Минск") -> str:
+def canonicalize_city_name(city: str | None, default_city: str = "") -> str:
     """Возвращает эталонное русское название города РБ (например, 'Гродна' -> 'Гродно', 'Магілёў' -> 'Могилёв')."""
     norm = normalize_city(city)
     if not norm:

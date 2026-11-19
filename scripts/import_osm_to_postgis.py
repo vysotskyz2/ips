@@ -120,9 +120,9 @@ async def import_from_overpass_bbox(
                 if buffered.contains(n_pt):
                     matched_nodes.append(nd)
 
-            raw_btype = tags.get("building", "commercial")
-            if raw_btype in ("yes", "true", "building"):
-                raw_btype = "commercial" if matched_nodes else "apartments"
+            raw_btype = tags.get("building") or "building"
+            if raw_btype in ("yes", "true"):
+                raw_btype = "building"
 
             lvl_str = tags.get("building:levels")
             try:

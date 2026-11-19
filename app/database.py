@@ -50,6 +50,8 @@ async def init_db() -> None:
 
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_runtime_columns(conn)
+        await _sanitize_placeholder_cities(conn)
+        await _sanitize_inconsistent_city_values(conn)
 
         if settings.is_postgres:
             await _setup_postgis_columns_and_indexes(conn)
@@ -79,6 +81,65 @@ async def _ensure_runtime_columns(conn) -> None:
         )
     except Exception as exc:
         logger.debug("Не удалось добавить address_district в SQLite: %s", exc)
+
+
+async def _sanitize_placeholder_cities(conn) -> None:
+    """Удаляет выдуманные значения в address_city (область/район вместо города)."""
+    try:
+        result = await conn.execute(
+            text(
+                """
+                UPDATE buildings
+                SET address_city = ''
+                WHERE address_city IS NOT NULL
+                  AND (
+                    LOWER(address_city) LIKE '%область'
+                    OR LOWER(address_city) LIKE '%район'
+                    OR LOWER(address_city) IN ('республика беларусь', 'рб', 'беларусь', '—', '-')
+                  );
+                """
+            )
+        )
+        rowcount = getattr(result, "rowcount", 0) or 0
+        if isinstance(rowcount, int) and rowcount > 0:
+            logger.info("Очищены выдуманные значения address_city у %s зданий", rowcount)
+    except Exception as exc:
+        logger.debug("Не удалось очистить выдуманные значения address_city: %s", exc)
+
+
+async def _sanitize_inconsistent_city_values(conn) -> None:
+    """Очищает address_city, если сохранённый город не относится к реальной области здания."""
+    from app.services.geo_locator import (
+        city_matches_region,
+        detect_belarus_region_and_soato,
+    )
+
+    try:
+        rows = await conn.execute(
+            text(
+                "SELECT id, address_city, center_lat, center_lon FROM buildings "
+                "WHERE address_city IS NOT NULL AND address_city <> ''"
+            )
+        )
+        updates: list[dict[str, int]] = []
+        for building_id, city, lat, lon in rows:
+            if lat is None or lon is None:
+                continue
+            region_name, _, _ = detect_belarus_region_and_soato(float(lat), float(lon))
+            if not city_matches_region(city, region_name):
+                updates.append({"building_id": building_id})
+
+        if updates:
+            await conn.execute(
+                text("UPDATE buildings SET address_city = '' WHERE id = :building_id"),
+                updates,
+            )
+            logger.info(
+                "Очищены несоответствующие области значения address_city у %s зданий",
+                len(updates),
+            )
+    except Exception as exc:
+        logger.debug("Не удалось проверить соответствие address_city области: %s", exc)
 
 
 async def _setup_postgis_columns_and_indexes(conn) -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -41,40 +40,7 @@ CITY_SOATO_PREFIXES: dict[str, str] = {
     "могилев": "7401000000",
 }
 
-KNOWN_CITY_POINTS: dict[str, tuple[float, float]] = {
-    "Минск": (53.9023, 27.5619),
-    "Брест": (52.0975, 23.7341),
-    "Гродно": (53.6667, 23.8333),
-    "Гомель": (52.4345, 30.9754),
-    "Витебск": (55.1904, 30.2049),
-    "Могилёв": (53.9006, 30.3319),
-    "Бобруйск": (53.1384, 29.2214),
-    "Барановичи": (53.1327, 26.0139),
-    "Борисов": (54.2279, 28.5057),
-    "Пинск": (52.0975, 26.0933),
-    "Орша": (54.5081, 30.4172),
-    "Мозырь": (52.0495, 29.2456),
-    "Солигорск": (52.7879, 27.5411),
-    "Новополоцк": (55.5300, 28.6600),
-    "Лида": (53.8833, 25.2997),
-    "Молодечно": (54.3130, 26.8540),
-    "Полоцк": (55.4857, 28.7856),
-    "Жлобин": (52.8926, 30.0240),
-    "Светлогорск": (52.6328, 29.7389),
-    "Речица": (52.3617, 30.3917),
-    "Жодино": (54.0985, 28.3331),
-    "Слуцк": (53.0274, 27.5597),
-    "Кобрин": (52.2138, 24.3564),
-    "Волковыск": (53.1561, 24.4513),
-    "Слоним": (53.0934, 25.3211),
-    "Сморгонь": (54.4798, 26.3957),
-    "Осиповичи": (53.3006, 28.6401),
-    "Береза": (52.5336, 24.9780),
-    "Дзержинск": (53.6833, 27.1333),
-    "Заславль": (54.0064, 27.2672),
-}
-
-CITY_REGIONS: dict[str, str] = {
+CITY_REGION_HINTS: dict[str, str] = {
     "минск": "г. Минск",
     "брест": "Брестская область",
     "барановичи": "Брестская область",
@@ -224,39 +190,21 @@ def city_soato_prefix(city: str | None) -> str | None:
     return CITY_SOATO_PREFIXES.get(norm)
 
 
-def _is_valid_city(city: str | None) -> bool:
+def city_matches_region(city: str | None, region_name: str) -> bool:
+    """Проверяет, что сохранённый город относится к реально определённой области."""
+    expected = CITY_REGION_HINTS.get(normalize_city(city))
+    return expected is None or expected == region_name
+
+
+def is_valid_city_name(city: str | None) -> bool:
+    """Проверяет, что значение является реальным названием населённого пункта, а не областью/районом."""
+    if not city:
+        return False
+    raw = str(city).strip().lower().replace("ё", "е")
+    if not raw or "область" in raw or "район" in raw:
+        return False
     norm = normalize_city(city)
     return bool(norm) and norm not in NON_CITY_VALUES
-
-
-def nearest_known_city(lat: float, lon: float, max_distance_km: float = 35.0) -> str | None:
-    """Ближайший крупный населённый пункт РБ для офлайн-фолбэка без Nominatim."""
-    best_city: str | None = None
-    best_distance = float("inf")
-    lat_rad = math.radians(lat)
-    for city, (city_lat, city_lon) in KNOWN_CITY_POINTS.items():
-        dlat = math.radians(city_lat - lat)
-        dlon = math.radians(city_lon - lon)
-        a = (
-            math.sin(dlat / 2) ** 2
-            + math.cos(lat_rad) * math.cos(math.radians(city_lat)) * math.sin(dlon / 2) ** 2
-        )
-        distance_km = 2 * 6371.0 * math.asin(min(1.0, math.sqrt(a)))
-        if distance_km < best_distance:
-            best_distance = distance_km
-            best_city = city
-    if best_city is not None and best_distance <= max_distance_km:
-        return best_city
-    return None
-
-
-def _is_non_city_name(city: str | None) -> bool:
-    norm = normalize_city(city)
-    if not norm:
-        return True
-    if norm in NON_CITY_VALUES:
-        return True
-    return norm.endswith((" область", " район"))
 
 
 def _extract_city_from_address(address: dict[str, Any]) -> str | None:
@@ -328,27 +276,24 @@ async def resolve_city_and_region(
     lat: float,
     lon: float,
     raw_city: str | None = None,
-) -> tuple[str, str, str]:
-    """Возвращает (город, область, SOATO-префикс) для точки на карте РБ."""
-    region_name, region_default_city, region_soato = detect_belarus_region_and_soato(lat, lon)
+) -> tuple[str | None, str, str]:
+    """
+    Возвращает (город, область, SOATO-префикс) для точки на карте РБ.
+    Город берётся ТОЛЬКО из реальных данных: тегов OSM или Nominatim.
+    Если город достоверно не определён — возвращается None, без подстановки
+    ближайшего города или названия области вместо города.
+    """
+    region_name, _region_default_city, region_soato = detect_belarus_region_and_soato(lat, lon)
 
     city_source = raw_city
-    if not _is_valid_city(city_source):
+    if not is_valid_city_name(city_source):
         city_source = await reverse_geocode_city(lat, lon)
-    if not _is_valid_city(city_source):
-        nearest_city = nearest_known_city(lat, lon)
-        if nearest_city and CITY_REGIONS.get(normalize_city(nearest_city)) == region_name:
-            city_source = nearest_city
-        else:
-            return region_name, region_name, region_soato
+    if not is_valid_city_name(city_source):
+        return None, region_name, region_soato
 
-    city_value = canonicalize_city_name(city_source, default_city=region_default_city)
-    if _is_non_city_name(city_value):
-        city_value = region_name
+    city_value = canonicalize_city_name(city_source)
+    if not is_valid_city_name(city_value):
+        return None, region_name, region_soato
 
-    city_region = CITY_REGIONS.get(normalize_city(city_value))
-    if city_region is not None and city_region != region_name:
-        soato_prefix = region_soato
-    else:
-        soato_prefix = city_soato_prefix(city_value) or region_soato
+    soato_prefix = city_soato_prefix(city_value) or region_soato
     return city_value, region_name, soato_prefix

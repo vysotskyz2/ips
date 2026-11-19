@@ -38,6 +38,7 @@ from app.services.address_matcher import (
 from app.services.egr_service import attach_egr_records_to_building
 from app.services.geo_locator import (
     detect_belarus_region_and_soato,
+    is_valid_city_name,
     resolve_city_and_region,
     resolve_district,
 )
@@ -631,12 +632,12 @@ async def enrich_building_from_osm_and_egr(
                     or ob_tags.get("addr:village")
                     or ob_tags.get("addr:municipality")
                 )
-                if osm_city:
-                    canonical_city = canonicalize_city_name(
-                        osm_city, default_city=building.address_city or "Минск"
-                    )
+                if osm_city and is_valid_city_name(osm_city):
+                    canonical_city = canonicalize_city_name(osm_city)
                     if normalize_city(canonical_city) != normalize_city(building.address_city):
                         building.address_city = canonical_city
+                elif not is_valid_city_name(building.address_city):
+                    building.address_city = ""
 
                 detected_region, _, _ = detect_belarus_region_and_soato(
                     building.center_lat, building.center_lon
@@ -952,7 +953,6 @@ async def get_or_enrich_building_by_coords(
     hint_street: str | None = None,
     hint_housenumber: str | None = None,
     hint_city: str | None = None,
-    hint_floors: int | None = None,
     hint_type: str | None = None,
     hint_osm_id: int | None = None,
     hint_geometry: dict[str, Any] | None = None,
@@ -1148,11 +1148,11 @@ async def get_or_enrich_building_by_coords(
     if existing_b_by_cad is not None:
         return _building_to_detail(existing_b_by_cad)
 
-    raw_btype = b_tags.get("building") or hint_type or "commercial"
-    if raw_btype in ("yes", "true", "building"):
-        raw_btype = "commercial" if ("shop" in b_tags or "office" in b_tags) else "apartments"
+    raw_btype = b_tags.get("building") or hint_type or "building"
+    if raw_btype in ("yes", "true"):
+        raw_btype = "building"
 
-    floors_str = b_tags.get("building:levels") or (str(hint_floors) if hint_floors else None)
+    floors_str = b_tags.get("building:levels")
     try:
         floors_val = max(1, int(float(floors_str))) if floors_str else 0
     except ValueError:
@@ -1182,7 +1182,7 @@ async def get_or_enrich_building_by_coords(
         purpose_label=None,
         address_region=region_name,
         address_district=district_val,
-        address_city=city_val,
+        address_city=city_val or "",
         address_street=street_val,
         address_housenumber=housenumber_val,
         postal_code=b_tags.get("addr:postcode"),

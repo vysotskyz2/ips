@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     enable_live_reverse_geocoding: bool = True
     enable_live_egr_verification: bool = False
     enable_egr_enrichment: bool = True
+    area_import_tile_size_deg: float = 0.008
+    area_import_max_tiles: int = 120
+    area_import_max_fetch_concurrency: int = 1
     overpass_api_url: str = "https://overpass-api.de/api/interpreter"
     geofabrik_belarus_pbf_url: str = "https://download.geofabrik.de/europe/belarus-latest.osm.pbf"
 

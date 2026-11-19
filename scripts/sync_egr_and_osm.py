@@ -40,6 +40,7 @@ from app.services.egr_service import (
     sync_egr_commercial_period,
     sync_egr_state_organizations,
 )
+from app.services.geo_locator import is_valid_city_name
 
 # Ключевые деловые, торговые и административные зоны городов РБ для пакетной загрузки из OSM API v0.6
 BELARUS_HOTSPOT_BBOXES: list[tuple[str, tuple[float, float, float, float]]] = [
@@ -106,7 +107,7 @@ async def import_osm_and_egr_for_bbox(
 
         center_lon = round(poly.centroid.x, 6)
         center_lat = round(poly.centroid.y, 6)
-        region_name, default_city, _ = detect_belarus_region_and_soato(center_lat, center_lon)
+        region_name, _default_city, _ = detect_belarus_region_and_soato(center_lat, center_lon)
 
         raw_city = (
             tags.get("addr:city:ru")
@@ -115,7 +116,7 @@ async def import_osm_and_egr_for_bbox(
             or tags.get("addr:village")
             or hotspot_city
         )
-        city_val = canonicalize_city_name(raw_city, default_city=default_city)
+        city_val = canonicalize_city_name(raw_city) if is_valid_city_name(raw_city) else ""
         district_val = resolve_district(center_lat, center_lon, city_val)
         street_val = (
             tags.get("addr:street:ru")
@@ -191,9 +192,9 @@ async def import_osm_and_egr_for_bbox(
             b_area = compute_polygon_area_sqm(ring)
             _, building_cad, _ = generate_cadastral_numbers(center_lat, center_lon, osm_id)
 
-            raw_btype = tags.get("building", "commercial")
-            if raw_btype in ("yes", "true", "building"):
-                raw_btype = "commercial" if (matched_pois or has_egr_orgs) else "apartments"
+            raw_btype = tags.get("building") or "building"
+            if raw_btype in ("yes", "true"):
+                raw_btype = "building"
 
             lvl_str = tags.get("building:levels")
             try:

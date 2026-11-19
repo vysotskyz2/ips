@@ -353,3 +353,39 @@ def test_egr_only_active_entities_accepted():
     assert is_egr_go_active({"cact": "+", "cstate": None, "dto": None})
     assert not is_egr_go_active({"cact": "+", "cstate": "П", "dto": None})
     assert not is_egr_go_active({"cact": "+", "cstate": "И", "dto": None})
+
+
+@pytest.mark.asyncio
+async def test_no_placeholder_city_fallbacks(monkeypatch):
+    from app.models.building import Building
+    from app.services.geo_locator import resolve_city_and_region
+
+    monkeypatch.setattr(settings, "enable_live_reverse_geocoding", False)
+
+    city, region, _ = await resolve_city_and_region(53.7, 27.9)
+    assert city is None
+    assert region
+
+    region_as_city, _, _ = await resolve_city_and_region(
+        53.7, 27.9, raw_city="Минская область"
+    )
+    assert region_as_city is None
+
+    district_as_city, _, _ = await resolve_city_and_region(
+        53.7, 27.9, raw_city="Минский район"
+    )
+    assert district_as_city is None
+
+    real_city, _, _ = await resolve_city_and_region(53.7, 27.9, raw_city="Минск")
+    assert real_city == "Минск"
+
+    region_city_building = Building(
+        address_city="Минская область",
+        address_street="ул. Тестовая",
+        address_housenumber="1",
+    )
+    assert "Минская область" not in region_city_building.full_address
+    assert "ул. Тестовая" in region_city_building.full_address
+
+    no_address_building = Building(address_city="")
+    assert no_address_building.full_address == "—"
