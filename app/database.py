@@ -49,9 +49,36 @@ async def init_db() -> None:
                 logger.warning("Не удалось активировать расширения PostGIS: %s", exc)
 
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_runtime_columns(conn)
 
         if settings.is_postgres:
             await _setup_postgis_columns_and_indexes(conn)
+
+
+async def _ensure_runtime_columns(conn) -> None:
+    """Добавляет новые колонки в существующую БД без потери данных."""
+    if settings.is_postgres:
+        try:
+            await conn.execute(
+                text("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS address_district VARCHAR(120);")
+            )
+            await conn.execute(
+                text("CREATE INDEX IF NOT EXISTS idx_buildings_district ON buildings (address_district);")
+            )
+        except Exception as exc:
+            logger.debug("Не удалось добавить address_district: %s", exc)
+        return
+
+    try:
+        columns = await conn.execute(text("PRAGMA table_info(buildings)"))
+        existing = {row[1] for row in columns.fetchall()}
+        if "address_district" not in existing:
+            await conn.execute(text("ALTER TABLE buildings ADD COLUMN address_district VARCHAR(120);"))
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_buildings_district ON buildings (address_district);")
+        )
+    except Exception as exc:
+        logger.debug("Не удалось добавить address_district в SQLite: %s", exc)
 
 
 async def _setup_postgis_columns_and_indexes(conn) -> None:

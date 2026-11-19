@@ -427,6 +427,182 @@ async def sync_egr_commercial_period(
         return added
 
 
+def _excluded_address_score(item: dict[str, Any]) -> tuple[str, str, int]:
+    """Приоритет адреса для исключённого субъекта: более поздняя запись важнее."""
+    return (
+        str(item.get("dfrom") or ""),
+        str(item.get("dto") or ""),
+        1 if item.get("cact") == "+" else 0,
+    )
+
+
+async def _fetch_excluded_names(client: httpx.AsyncClient) -> dict[str, str]:
+    """Возвращает UNP -> наименование для всех исключённых ЮЛ и ИП."""
+    names: dict[str, str] = {}
+    for endpoint in ("getAllLikvidUL", "getAllLikvidIP"):
+        try:
+            resp = await client.get(f"{EGR_BASE_URL}/{endpoint}")
+        except Exception as exc:
+            logger.warning("Не удалось получить %s из ЕГР: %s", endpoint, exc)
+            continue
+        if resp.status_code != 200:
+            continue
+        payload = resp.json()
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            unp = str(item.get("ngrn") or "").strip()
+            name = (
+                item.get("vnaim")
+                or item.get("vn")
+                or item.get("vfn")
+                or item.get("vfio")
+            )
+            if unp and name:
+                names[unp] = str(name).strip()
+    return names
+
+
+async def sync_egr_excluded_addresses(
+    session: AsyncSession,
+    from_year: int = 1990,
+    to_year: int | None = None,
+    auto_commit: bool = True,
+) -> tuple[int, int]:
+    """
+    Синхронизирует исключённые из ЕГР субъекты (ЮЛ и ИП) вместе с их последним
+    известным адресом. Адреса берутся из архива getAddressByPeriod по годам.
+    Возвращает (добавлено, обновлено).
+    """
+    if to_year is None:
+        to_year = 2026
+
+    added = 0
+    updated = 0
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        excluded_names = await _fetch_excluded_names(client)
+        if not excluded_names:
+            return 0, 0
+
+        existing_res = await session.execute(select(EgrRecord))
+        existing_by_unp: dict[str, EgrRecord] = {
+            str(record.unp): record for record in existing_res.scalars().all()
+        }
+
+        for year in range(from_year, to_year + 1):
+            resp = await client.get(
+                f"{EGR_BASE_URL}/getAddressByPeriod/01.01.{year}/31.12.{year}"
+            )
+            if resp.status_code != 200:
+                continue
+            addresses = resp.json()
+            if not isinstance(addresses, list):
+                continue
+
+            best_by_unp: dict[str, dict[str, Any]] = {}
+            for item in addresses:
+                unp = str(item.get("ngrn") or "").strip()
+                if unp not in excluded_names:
+                    continue
+                city = str(item.get("vnp") or item.get("vplace") or "").strip()
+                street = str(item.get("vulitsa") or "").strip()
+                dom = str(item.get("vdom") or "").strip()
+                if not (city and street and dom):
+                    continue
+                current = best_by_unp.get(unp)
+                if current is None or _excluded_address_score(item) > _excluded_address_score(current):
+                    best_by_unp[unp] = item
+
+            for unp, addr in best_by_unp.items():
+                name = excluded_names.get(unp)
+                if not name:
+                    continue
+
+                city = str(addr.get("vnp") or addr.get("vplace") or "").strip()
+                street_type = (addr.get("nsi00226") or {}).get("vntulk") or "ул."
+                street = str(addr.get("vulitsa") or "").strip()
+                dom = str(addr.get("vdom") or "").strip()
+                korp = str(addr.get("vkorp") or "").strip() or None
+                pom = str(addr.get("vpom") or "").strip() or None
+
+                n_city = normalize_city(city)
+                n_street = normalize_street(street)
+                n_house = normalize_housenumber(dom, korp)
+                if not (n_city and n_street and n_house):
+                    continue
+
+                room_type = (addr.get("nsi00227") or {}).get("vntpomk") or "пом."
+                category = classify_category_by_oked_or_name(name)
+                short_name = name[:350]
+                full_name = name[:600]
+
+                record = existing_by_unp.get(unp)
+                if record is None:
+                    record = EgrRecord(
+                        unp=unp,
+                        short_name=short_name,
+                        full_name=full_name,
+                        status_label="Исключен из ЕГР",
+                        category=category,
+                        oked_code=None,
+                        oked_name=None,
+                        postal_code=str(addr.get("nindex") or addr.get("vindex") or "") or None,
+                        region=addr.get("vregion"),
+                        district=addr.get("vdistrict"),
+                        city=city,
+                        street_type=street_type,
+                        street=street,
+                        housenumber=dom,
+                        korpus=korp,
+                        room_type=room_type if pom else None,
+                        room=pom,
+                        phone=addr.get("vtels"),
+                        email=addr.get("vemail"),
+                        website=addr.get("vsite"),
+                        norm_city=n_city,
+                        norm_street=n_street,
+                        norm_house=n_house,
+                    )
+                    session.add(record)
+                    existing_by_unp[unp] = record
+                    added += 1
+                else:
+                    record.short_name = short_name
+                    record.full_name = full_name
+                    record.status_label = "Исключен из ЕГР"
+                    record.category = category
+                    record.postal_code = (
+                        str(addr.get("nindex") or addr.get("vindex") or "") or None
+                    )
+                    record.region = addr.get("vregion")
+                    record.district = addr.get("vdistrict")
+                    record.city = city
+                    record.street_type = street_type
+                    record.street = street
+                    record.housenumber = dom
+                    record.korpus = korp
+                    record.room_type = room_type if pom else None
+                    record.room = pom
+                    record.phone = addr.get("vtels")
+                    record.email = addr.get("vemail")
+                    record.website = addr.get("vsite")
+                    record.norm_city = n_city
+                    record.norm_street = n_street
+                    record.norm_house = n_house
+                    updated += 1
+
+            if auto_commit:
+                await session.commit()
+            logger.info(
+                "ЕГР: обработан %s год, исключённых субъектов в выборке: %s",
+                year,
+                len(best_by_unp),
+            )
+
+    return added, updated
+
+
 async def attach_egr_records_to_building(
     session: AsyncSession,
     building: Building,
@@ -532,7 +708,7 @@ async def attach_egr_records_to_building(
                 lon=None,
                 metadata_json={
                     "source": "ЕГР Минюста РБ (egr.gov.by)",
-                    "status": "Действующий",
+                    "status": rec.status_label or "Действующий",
                     "full_name": rec.full_name,
                     "oked_code": rec.oked_code,
                     "oked_name": rec.oked_name,

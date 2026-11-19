@@ -22,6 +22,7 @@ from app.services.cadastral_service import (
     compute_polygon_area_sqm,
     detect_belarus_region_and_soato,
     generate_cadastral_numbers,
+    resolve_district,
 )
 
 CITY_BBOXES: dict[str, tuple[float, float, float, float]] = {
@@ -107,6 +108,8 @@ async def import_from_overpass_bbox(
 
             tags = w.get("tags", {})
             region_name, default_city, _ = detect_belarus_region_and_soato(center_lat, center_lon)
+            city_val = tags.get("addr:city") or city_name or default_city
+            district_val = resolve_district(center_lat, center_lon, city_val)
             _, building_cad, _ = generate_cadastral_numbers(center_lat, center_lon, osm_id)
 
             # Ищем все POI-точки внутри полигона здания (с буфером ~12м)
@@ -139,7 +142,8 @@ async def import_from_overpass_bbox(
                 building_type=raw_btype,
                 purpose_label=None,
                 address_region=region_name,
-                address_city=tags.get("addr:city") or city_name or default_city,
+                address_district=district_val,
+                address_city=city_val,
                 address_street=tags.get("addr:street:ru") or tags.get("addr:street"),
                 address_housenumber=tags.get("addr:housenumber"),
                 postal_code=tags.get("addr:postcode"),

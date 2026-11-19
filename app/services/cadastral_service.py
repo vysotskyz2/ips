@@ -39,6 +39,7 @@ from app.services.egr_service import attach_egr_records_to_building
 from app.services.geo_locator import (
     detect_belarus_region_and_soato,
     resolve_city_and_region,
+    resolve_district,
 )
 from app.services.seed_data import SEED_PARCELS_AND_BUILDINGS, make_rect_polygon
 
@@ -642,6 +643,12 @@ async def enrich_building_from_osm_and_egr(
                 )
                 if detected_region and detected_region != building.address_region:
                     building.address_region = detected_region
+
+                detected_district = resolve_district(
+                    building.center_lat, building.center_lon, building.address_city
+                )
+                if detected_district and detected_district != building.address_district:
+                    building.address_district = detected_district
             else:
                 try:
                     poly = shape(json.loads(building.geometry_geojson))
@@ -895,6 +902,7 @@ def _building_to_detail(building: Building) -> BuildingDetail:
         building_type=building.building_type,
         purpose_label=None,
         address_region=building.address_region,
+        address_district=building.address_district,
         address_city=building.address_city,
         address_street=building.address_street,
         address_housenumber=building.address_housenumber,
@@ -1121,6 +1129,7 @@ async def get_or_enrich_building_by_coords(
         center_lon_val,
         raw_city=raw_city,
     )
+    district_val = resolve_district(center_lat_val, center_lon_val, city_val)
 
     _, building_cad, _ = generate_cadastral_numbers(
         center_lat_val,
@@ -1172,6 +1181,7 @@ async def get_or_enrich_building_by_coords(
         building_type=raw_btype,
         purpose_label=None,
         address_region=region_name,
+        address_district=district_val,
         address_city=city_val,
         address_street=street_val,
         address_housenumber=housenumber_val,
@@ -1231,6 +1241,8 @@ async def search_cadastral(
                 None,
                 [
                     b.name,
+                    b.address_region,
+                    b.address_district,
                     b.address_city,
                     b.address_street,
                     b.address_housenumber,
@@ -1368,6 +1380,8 @@ async def get_cadastral_geojson(
                     "name": b.name or b.full_address,
                     "building_type": b.building_type,
                     "data_source": "OpenStreetMap",
+                    "address_region": b.address_region or "",
+                    "address_district": b.address_district or "",
                     "address_city": b.address_city,
                     "address_street": b.address_street or "",
                     "address_housenumber": b.address_housenumber or "",

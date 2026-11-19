@@ -17,6 +17,7 @@ from app.models.building import Building
 from app.models.organization import Organization
 from app.models.parcel import CadastralParcel
 from app.services.cadastral_service import compute_polygon_area_sqm, fetch_osm_map_box
+from app.services.geo_locator import resolve_district
 
 
 def _source(org: Organization) -> str:
@@ -136,6 +137,9 @@ async def main() -> None:
             building.inventory_number = None
             building.parcel_id = None
             _recompute_area(building)
+            building.address_district = resolve_district(
+                building.center_lat, building.center_lon, building.address_city
+            )
 
             for org in orgs_by_building.get(building.id, []):
                 if _is_egr_org(org):

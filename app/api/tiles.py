@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -13,6 +14,10 @@ from app.services.cadastral_service import get_cadastral_geojson
 from app.services.mvt_encoder import generate_cadastral_mvt_tile
 
 router = APIRouter(tags=["Векторные тайлы и гео-слои"])
+
+DISTRICTS_GEOJSON_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "belarus_districts.geojson"
+)
 
 
 @router.get(
@@ -41,6 +46,17 @@ async def get_cadastral_vector_tile(
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+@router.get(
+    "/geojson/districts",
+    summary="GeoJSON-слой реальных границ районов РБ (geoBoundaries ADM2)",
+)
+async def get_districts_geojson() -> dict[str, Any]:
+    if not DISTRICTS_GEOJSON_PATH.exists():
+        return {"type": "FeatureCollection", "features": []}
+    with DISTRICTS_GEOJSON_PATH.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 @router.get(

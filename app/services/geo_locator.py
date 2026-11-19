@@ -18,6 +18,7 @@ from app.services.address_matcher import canonicalize_city_name, normalize_city
 logger = logging.getLogger(__name__)
 
 REGIONS_PATH = Path(__file__).resolve().parent.parent / "data" / "belarus_regions.geojson"
+DISTRICTS_PATH = Path(__file__).resolve().parent.parent / "data" / "belarus_districts.geojson"
 
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 
@@ -144,6 +145,53 @@ def _load_region_features() -> list[tuple[Any, str, str, str]]:
             continue
         features.append((geom, *region_def))
     return features
+
+
+DISTRICT_KIND_PRIORITY = {"city_district": 3, "city": 2, "district": 1}
+
+
+@lru_cache(maxsize=1)
+def _load_district_features() -> list[tuple[Any, str, str]]:
+    if not DISTRICTS_PATH.exists():
+        logger.warning("Файл границ районов РБ не найден: %s", DISTRICTS_PATH)
+        return []
+    with DISTRICTS_PATH.open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    features: list[tuple[Any, str, str]] = []
+    for feat in data.get("features", []):
+        props = feat.get("properties") or {}
+        name_ru = props.get("name_ru") or props.get("shapeName")
+        if not name_ru:
+            continue
+        kind = str(props.get("kind") or "district")
+        try:
+            geom = shape(feat["geometry"])
+        except Exception:
+            continue
+        features.append((geom, str(name_ru), kind))
+    features.sort(key=lambda item: DISTRICT_KIND_PRIORITY.get(item[2], 0), reverse=True)
+    return features
+
+
+def detect_belarus_district(lat: float, lon: float) -> str | None:
+    """Возвращает реальный район/городской район по актуальным границам OSM."""
+    pt = Point(lon, lat)
+    for geom, name_ru, _kind in _load_district_features():
+        try:
+            if geom.contains(pt):
+                return name_ru
+        except Exception:
+            continue
+    return None
+
+
+def resolve_district(lat: float, lon: float, city: str | None = None) -> str | None:
+    """
+    Определяет район для объекта по реальным границам OSM:
+    приоритет — район внутри города, затем город областного подчинения,
+    затем район области. Если ничего не найдено — None (без выдуманных границ).
+    """
+    return detect_belarus_district(lat, lon)
 
 
 def detect_belarus_region_and_soato(lat: float, lon: float) -> tuple[str, str, str]:

@@ -34,6 +34,7 @@ class Building(Base):
     purpose_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     address_region: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    address_district: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     address_city: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     address_street: Mapped[str | None] = mapped_column(String(180), nullable=True, index=True)
     address_housenumber: Mapped[str | None] = mapped_column(String(48), nullable=True)

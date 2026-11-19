@@ -290,6 +290,38 @@ def test_region_detection_uses_real_admin_boundaries():
     assert detect_belarus_region_and_soato(53.9006, 30.3319)[0] == "Могилёвская область"
 
 
+def test_real_district_resolution():
+    from app.services.geo_locator import resolve_district
+
+    # Минск и областные центры — реальные районы внутри города
+    assert resolve_district(53.9000, 27.5600, "Минск") == "Ленинский район"
+    assert resolve_district(52.0975, 23.7341, "Брест") == "Московский район"
+    assert resolve_district(53.1384, 29.2214, "Бобруйск") == "Ленинский район"
+
+    # Города областного подчинения без внутренних районов
+    assert resolve_district(53.1301, 26.0190, "Барановичи") == "г. Барановичи"
+
+    # Районы областей
+    assert resolve_district(52.5336, 24.9780, "") == "Берёзовский район"
+
+
+@pytest.mark.asyncio
+async def test_district_geojson_contains_osm_admin_units():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/v1/geojson/districts")
+        assert resp.status_code == 200
+        features = resp.json()["features"]
+        kinds = {}
+        for feature in features:
+            kind = feature["properties"]["kind"]
+            kinds[kind] = kinds.get(kind, 0) + 1
+        assert kinds["district"] == 118
+        assert kinds["city_district"] == 24
+        assert kinds["city"] == 10
+        assert kinds["city_fallback"] == 5
+
+
 def test_egr_only_active_entities_accepted():
     from app.services.egr_service import (
         is_egr_address_active,

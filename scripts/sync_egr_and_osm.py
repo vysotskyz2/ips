@@ -31,6 +31,7 @@ from app.services.cadastral_service import (
     enrich_building_from_osm_and_egr,
     fetch_osm_map_box,
     generate_cadastral_numbers,
+    resolve_district,
     get_stats,
     match_pois_strictly_to_building,
 )
@@ -115,6 +116,7 @@ async def import_osm_and_egr_for_bbox(
             or hotspot_city
         )
         city_val = canonicalize_city_name(raw_city, default_city=default_city)
+        district_val = resolve_district(center_lat, center_lon, city_val)
         street_val = (
             tags.get("addr:street:ru")
             or translate_belarusian_street_to_ru(tags.get("addr:street"))
@@ -211,6 +213,7 @@ async def import_osm_and_egr_for_bbox(
                 building_type=raw_btype,
                 purpose_label=None,
                 address_region=region_name,
+                address_district=district_val,
                 address_city=city_val,
                 address_street=street_val,
                 address_housenumber=house_val,

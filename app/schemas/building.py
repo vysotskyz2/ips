@@ -32,6 +32,7 @@ class BuildingDetail(BaseModel):
     building_type: str
     purpose_label: str | None = None
     address_region: str | None = None
+    address_district: str | None = None
     address_city: str
     address_street: str | None = None
     address_housenumber: str | None = None

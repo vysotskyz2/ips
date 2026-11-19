@@ -20,7 +20,9 @@ let map = null;
 let currentBuilding = null;
 let selectedCategoryFilter = "ALL";
 let is3DEnabled = true;
+let isDistrictsVisible = true;
 let hoverPopup = null;
+let districtPopup = null;
 let allCatalogBuildings = [];
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -51,6 +53,16 @@ function initMap() {
         offset: 12,
     });
 
+    districtPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 10,
+    });
+
+    map.getCanvas().addEventListener("mouseleave", () => {
+        if (districtPopup) districtPopup.remove();
+    });
+
     map.on("mousemove", (e) => {
         const lat = e.lngLat.lat.toFixed(5);
         const lon = e.lngLat.lng.toFixed(5);
@@ -77,8 +89,16 @@ async function setupCadastralLayers() {
         maxzoom: 19,
     });
 
-    // 2. GeoJSON-источник зданий для мгновенного отображения и подсветки
-    const buildingsGeoJSON = await fetch("/api/v1/geojson/buildings").then((r) => r.json());
+    // 2. GeoJSON-источники зданий и реальных границ районов РБ
+    const [buildingsGeoJSON, districtsGeoJSON] = await Promise.all([
+        fetch("/api/v1/geojson/buildings").then((r) => r.json()),
+        fetch("/api/v1/geojson/districts").then((r) => r.json()),
+    ]);
+
+    map.addSource("belarus-districts-geojson", {
+        type: "geojson",
+        data: districtsGeoJSON,
+    });
 
     map.addSource("cadastral-buildings-geojson", {
         type: "geojson",
@@ -88,6 +108,91 @@ async function setupCadastralLayers() {
     map.addSource("selected-building-source", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
+    });
+
+    // Города областного подчинения — fallback там, где нет внутренних районов
+    map.addLayer({
+        id: "belarus-cities-fill",
+        type: "fill",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "city_fallback"],
+        paint: {
+            "fill-color": "#64748b",
+            "fill-opacity": 0.14,
+            "fill-antialias": false,
+        },
+    });
+
+    map.addLayer({
+        id: "belarus-cities-outline",
+        type: "line",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "city_fallback"],
+        paint: {
+            "line-color": "#64748b",
+            "line-width": 1.4,
+            "line-dasharray": [4, 3],
+            "line-opacity": 0.8,
+            "line-join": "round",
+            "line-cap": "round",
+            "line-blur": 0,
+        },
+    });
+
+    // Реальные границы районов областей (актуальные OSM admin_level=6)
+    map.addLayer({
+        id: "belarus-rayons-fill",
+        type: "fill",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "district"],
+        paint: {
+            "fill-color": ["coalesce", ["get", "fill_color"], "#60a5fa"],
+            "fill-opacity": 0.18,
+            "fill-antialias": false,
+        },
+    });
+
+    map.addLayer({
+        id: "belarus-rayons-outline",
+        type: "line",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "district"],
+        paint: {
+            "line-color": "#94a3b8",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1.2, 12, 2.2],
+            "line-opacity": 0.9,
+            "line-join": "round",
+            "line-cap": "round",
+            "line-blur": 0,
+        },
+    });
+
+    // Реальные границы районов внутри городов (OSM admin_level=9)
+    map.addLayer({
+        id: "belarus-city-districts-fill",
+        type: "fill",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "city_district"],
+        paint: {
+            "fill-color": ["coalesce", ["get", "fill_color"], "#f59e0b"],
+            "fill-opacity": 0.24,
+            "fill-antialias": false,
+        },
+    });
+
+    map.addLayer({
+        id: "belarus-city-districts-outline",
+        type: "line",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "city_district"],
+        paint: {
+            "line-color": "#f59e0b",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.8, 14, 3.0],
+            "line-opacity": 0.95,
+            "line-join": "round",
+            "line-cap": "round",
+            "line-blur": 0,
+        },
     });
 
     // Плоский 2D-слой контуров зданий для точного определения клика по основанию здания (без искажений 3D-экструзии)
@@ -184,6 +289,115 @@ async function setupCadastralLayers() {
         paint: {
             "text-color": "#ffffff",
         },
+    });
+
+    // Подписи районов — выше зданий и маркеров
+    map.addLayer({
+        id: "belarus-rayons-labels",
+        type: "symbol",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "district"],
+        minzoom: 7.2,
+        layout: {
+            "text-field": ["coalesce", ["get", "name_ru"], ["get", "shapeName"]],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 7, 9, 10, 12],
+            "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+            "text-allow-overlap": false,
+            "text-padding": 6,
+        },
+        paint: {
+            "text-color": "#e2e8f0",
+            "text-halo-color": "#0f172a",
+            "text-halo-width": 1.5,
+            "text-opacity": 0.92,
+        },
+    });
+
+    map.addLayer({
+        id: "belarus-city-districts-labels",
+        type: "symbol",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "city_district"],
+        minzoom: 9.5,
+        layout: {
+            "text-field": ["get", "name_ru"],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 9.5, 10, 13, 13],
+            "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+            "text-allow-overlap": false,
+            "text-padding": 5,
+        },
+        paint: {
+            "text-color": "#fdba74",
+            "text-halo-color": "#0f172a",
+            "text-halo-width": 1.8,
+            "text-opacity": 0.95,
+        },
+    });
+
+    map.addLayer({
+        id: "belarus-cities-labels",
+        type: "symbol",
+        source: "belarus-districts-geojson",
+        filter: ["==", ["get", "kind"], "city_fallback"],
+        minzoom: 9.5,
+        layout: {
+            "text-field": ["get", "name_ru"],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 9.5, 10, 13, 12],
+            "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+            "text-allow-overlap": false,
+            "text-padding": 6,
+        },
+        paint: {
+            "text-color": "#cbd5e1",
+            "text-halo-color": "#0f172a",
+            "text-halo-width": 1.4,
+            "text-opacity": 0.9,
+        },
+    });
+
+    // Подсказка при наведении на район / город
+    const districtFillLayers = [
+        "belarus-city-districts-fill",
+        "belarus-rayons-fill",
+        "belarus-cities-fill",
+    ].filter((layerId) => map.getLayer(layerId));
+
+    map.on("mousemove", (e) => {
+        if (!districtPopup) return;
+        const buildingHit = map.queryRenderedFeatures(e.point, {
+            layers: ["cadastral-buildings-footprint", "cadastral-markers-circle"],
+        });
+        if (buildingHit.length > 0) {
+            districtPopup.remove();
+            return;
+        }
+        const districtHit = map.queryRenderedFeatures(e.point, {
+            layers: districtFillLayers,
+        });
+        if (!districtHit.length) {
+            districtPopup.remove();
+            return;
+        }
+        const props = districtHit[0].properties || {};
+        const title = props.name_ru || props.shapeName || "Район";
+        let kindLabel = "Район области";
+        if (props.kind === "city_district") {
+            kindLabel = "Район города";
+            if (props.city_ru) kindLabel += ` • ${props.city_ru}`;
+        } else if (props.kind === "city" || props.kind === "city_fallback") {
+            kindLabel = "Город областного подчинения";
+        } else if (props.region_ru) {
+            kindLabel += ` • ${props.region_ru}`;
+        }
+        districtPopup
+            .setLngLat(e.lngLat)
+            .setHTML(
+                `<div>
+                    <strong>${escapeHtml(title)}</strong><br/>
+                    <span style="color:#cbd5e1; font-size:11px;">${escapeHtml(kindLabel)}</span>
+                </div>`
+            )
+            .addTo(map);
     });
 
     // Наведение курсора на кадастровые здания
@@ -466,14 +680,24 @@ function renderOrganizationsList() {
         const floorRoom = [org.floor, org.room].filter(Boolean).join(", ") || "этаж не указан";
         const metaSource = (org.metadata_json && org.metadata_json.source) || "OpenStreetMap / ЕГР РБ";
         const isEgr = metaSource.toLowerCase().includes("егр");
+        const egrStatus = (org.metadata_json && org.metadata_json.status) || "";
+        const isExcluded = /исключ|прекращ|ликвид/i.test(egrStatus);
         const sourceTagHtml = isEgr
-            ? `<span style="color:#34d399; font-size:10.5px; font-weight:600;">✓ ЕГР РБ (Действующий)</span>`
+            ? `<span style="color:${isExcluded ? "#f97316" : "#34d399"}; font-size:10.5px; font-weight:600;">${isExcluded ? "✕" : "✓"} ЕГР РБ: ${escapeHtml(
+                  egrStatus || "статус не указан"
+              )}</span>`
             : `<span style="color:#94a3b8; font-size:10.5px;">OSM РБ</span>`;
         const websiteHtml = org.website
             ? `<a href="${escapeHtml(org.website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
                   org.website.replace(/^https?:\/\//, "")
               )}</a>`
             : "—";
+        const egrLinkHtml =
+            org.unp && /^\d+$/.test(String(org.unp))
+                ? `<a class="org-egr-link" href="https://egr.gov.by/egrmobile/information?pan=${encodeURIComponent(
+                      org.unp
+                  )}" target="_blank" rel="noopener noreferrer">Доп. информация ↗</a>`
+                : "";
 
         card.innerHTML = `
             <div class="org-card-top">
@@ -490,6 +714,7 @@ function renderOrganizationsList() {
                 <div class="org-detail-item">УНП: <strong>${escapeHtml(org.unp || "—")}</strong></div>
                 <div class="org-detail-item">Тел.: <strong>${escapeHtml(org.phone || "—")}</strong></div>
                 <div class="org-detail-item">Сайт: ${websiteHtml}</div>
+                ${egrLinkHtml ? `<div class="org-detail-item org-egr-action">ЕГР: ${egrLinkHtml}</div>` : ""}
             </div>
         `;
         listEl.appendChild(card);
@@ -503,6 +728,7 @@ function renderObjectPassport(b) {
         ["Тип строения (OSM)", b.building_type || "—"],
         ["OSM ID", b.osm_id || "—"],
         ["Область / Регион", b.address_region || "—"],
+        ["Район", b.address_district || "—"],
         ["Адрес объекта", b.full_address],
         ["Почтовый индекс", b.postal_code || "—"],
         ["Количество этажей", b.floors > 0 ? `${b.floors}` : "—"],
@@ -597,6 +823,33 @@ function initUIHandlers() {
         btn3d.classList.toggle("active", is3DEnabled);
         if (map) {
             map.easeTo({ pitch: is3DEnabled ? 48 : 0, duration: 600 });
+        }
+    });
+
+    // Переключение видимости реальных границ районов РБ
+    const btnDistricts = document.getElementById("toggle-districts-btn");
+    btnDistricts.addEventListener("click", () => {
+        isDistrictsVisible = !isDistrictsVisible;
+        btnDistricts.classList.toggle("active", isDistrictsVisible);
+        const vis = isDistrictsVisible ? "visible" : "none";
+        if (map) {
+            [
+                "belarus-cities-fill",
+                "belarus-cities-outline",
+                "belarus-rayons-fill",
+                "belarus-rayons-outline",
+                "belarus-city-districts-fill",
+                "belarus-city-districts-outline",
+                "belarus-rayons-labels",
+                "belarus-city-districts-labels",
+                "belarus-cities-labels",
+            ].forEach(
+                (layerId) => {
+                    if (map.getLayer(layerId)) {
+                        map.setLayoutProperty(layerId, "visibility", vis);
+                    }
+                }
+            );
         }
     });
 
