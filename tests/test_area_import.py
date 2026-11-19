@@ -215,6 +215,45 @@ async def test_area_import_invalid_geometry_returns_422():
 
 
 @pytest.mark.asyncio
+async def test_area_journal_saves_and_returns_stats(monkeypatch):
+    async def fake_fetch(min_lon, min_lat, max_lon, max_lat):
+        return {"buildings": [_inside_building()], "pois": []}
+
+    monkeypatch.setattr(area_import_service, "fetch_osm_map_box", fake_fetch)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/areas/import-and-stats",
+            json={"geometry": SELECTION},
+        )
+        assert resp.status_code == 200
+        stats = resp.json()
+        entry_id = stats["journal_id"]
+        assert entry_id is not None
+        assert stats["journal_created_at"]
+
+        list_resp = await client.get("/api/v1/areas/journal")
+        assert list_resp.status_code == 200
+        entries = list_resp.json()
+        assert any(entry["id"] == entry_id for entry in entries)
+        listed = next(entry for entry in entries if entry["id"] == entry_id)
+        assert listed["geometry"]["type"] in ("Polygon", "MultiPolygon")
+
+        detail_resp = await client.get(f"/api/v1/areas/journal/{entry_id}")
+        assert detail_resp.status_code == 200
+        detail = detail_resp.json()
+        assert detail["stats"]["buildings_total"] >= 1
+        assert detail["stats"]["area_km2"] > 0
+
+        delete_resp = await client.delete(f"/api/v1/areas/journal/{entry_id}")
+        assert delete_resp.status_code == 204
+
+        missing_resp = await client.get(f"/api/v1/areas/journal/{entry_id}")
+        assert missing_resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_area_stats_use_local_db_without_osm(monkeypatch):
     async def empty_fetch(min_lon, min_lat, max_lon, max_lat):
         return None

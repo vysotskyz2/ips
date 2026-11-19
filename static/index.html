@@ -69,9 +69,6 @@
                 <button id="toggle-districts-btn" class="layer-toggle-btn active" title="Показать/скрыть реальные границы районов РБ">
                     Районы
                 </button>
-                <button id="toggle-catalog-btn" class="layer-toggle-btn" title="Открыть реестр объектов">
-                    Реестр объектов
-                </button>
                 <div class="area-draw-controls">
                     <span class="toolbar-label">Область:</span>
                     <button id="area-rectangle-btn" type="button" class="layer-toggle-btn area-mode-btn" data-area-mode="rectangle" title="Протянуть прямоугольник на карте">
@@ -80,10 +77,13 @@
                     <button id="area-polygon-btn" type="button" class="layer-toggle-btn area-mode-btn" data-area-mode="polygon" title="Кликайте по вершинам, двойной клик или Enter — завершить">
                         Полигон
                     </button>
-                    <button id="cancel-area-btn" type="button" class="layer-toggle-btn area-cancel-btn" title="Отменить выделение и закрыть аналитику">
+                    <button id="cancel-area-btn" type="button" class="layer-toggle-btn area-cancel-btn hidden" title="Отменить выделение">
                         Отмена
                     </button>
                 </div>
+                <button id="toggle-journal-btn" class="layer-toggle-btn" title="Сохранённые области и статистика">
+                    Журнал областей
+                </button>
             </div>
         </div>
 
@@ -155,27 +155,16 @@
                 <div id="area-stats-body" class="area-stats-body"></div>
             </aside>
 
-            <!-- Выдвижная панель реестра всех объектов (слева) -->
-            <aside id="catalog-panel" class="catalog-panel hidden">
+            <!-- Журнал сохранённых областей (слева) -->
+            <aside id="journal-panel" class="journal-panel hidden">
                 <div class="panel-header">
                     <div>
-                        <h2>Реестр объектов РБ</h2>
-                        <p class="panel-sub">Быстрый выбор здания для осмотра</p>
+                        <h2>Журнал областей</h2>
+                        <p class="panel-sub">Сохранённые выделения и статистика</p>
                     </div>
-                    <button id="close-catalog-btn" class="icon-btn" title="Закрыть реестр">✕</button>
+                    <button id="close-journal-btn" class="icon-btn" title="Закрыть журнал">✕</button>
                 </div>
-                <div class="catalog-filters">
-                    <select id="catalog-city-filter">
-                        <option value="">Все города Беларуси</option>
-                        <option value="Минск">г. Минск</option>
-                        <option value="Брест">г. Брест</option>
-                        <option value="Гродно">г. Гродно</option>
-                        <option value="Гомель">г. Гомель</option>
-                        <option value="Витебск">г. Витебск</option>
-                        <option value="Могилёв">г. Могилёв</option>
-                    </select>
-                </div>
-                <div id="catalog-list" class="catalog-list"></div>
+                <div id="journal-list" class="journal-list"></div>
             </aside>
 
             <!-- Боковая карточка выбранного здания и его организаций (справа) -->

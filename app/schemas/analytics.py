@@ -46,3 +46,20 @@ class AreaImportResponse(BaseModel):
     buildings_by_district: dict[str, int] = Field(default_factory=dict)
 
     import_stats: AreaImportCounters = Field(default_factory=AreaImportCounters)
+    journal_id: int | None = None
+    journal_created_at: str | None = None
+
+
+class AreaJournalEntrySummary(BaseModel):
+    id: int
+    created_at: str
+    area_sqm: float
+    area_km2: float
+    data_scope: str
+    buildings_total: int
+    organizations_total: int
+    geometry: dict[str, Any]
+
+
+class AreaJournalEntryDetail(AreaJournalEntrySummary):
+    stats: AreaImportResponse

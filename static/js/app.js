@@ -6,15 +6,116 @@ const BELARUS_BOUNDS = [
 ];
 
 const BUILDING_TYPE_LABELS = {
-    retail: "Торгово-развлекательный комплекс",
-    office: "Бизнес-центр / Офисное здание",
-    commercial: "Многофункциональное деловое здание",
-    public: "Административно-общественное здание",
-    university: "Учреждение высшего образования",
+    yes: "Здание",
+    true: "Здание",
+    building: "Здание",
+    house: "Жилой дом",
+    detached: "Отдельно стоящий жилой дом",
+    residential: "Жилое здание",
     apartments: "Многоквартирный жилой дом",
-    industrial: "Производственно-складской объект",
-    hospital: "Учреждение здравоохранения",
+    apartment: "Многоквартирный жилой дом",
+    terrace: "Рядовой жилой дом",
+    dormitory: "Общежитие",
+    garage: "Гараж",
+    garages: "Гаражи",
+    carport: "Навес для автомобиля",
+    parking: "Паркинг",
+    parking_garage: "Многоуровневый паркинг",
+    shed: "Сарай / хозяйственная постройка",
+    hut: "Временное строение",
+    greenhouse: "Теплица",
+    barn: "Амбар / склад",
+    farm: "Сельскохозяйственное строение",
+    farm_auxiliary: "Вспомогательное сельхозстроение",
+    stable: "Конюшня",
+    sty: "Свинарник",
+    cowshed: "Коровник",
+    warehouse: "Склад",
+    industrial: "Производственное здание",
+    factory: "Заводское здание",
+    manufacture: "Промышленное здание",
+    commercial: "Коммерческое здание",
+    retail: "Торговое здание",
+    office: "Офисное здание",
+    kiosk: "Киоск",
+    supermarket: "Супермаркет",
+    mall: "Торговый центр",
+    hotel: "Гостиница",
+    church: "Церковь",
+    chapel: "Часовня",
+    cathedral: "Собор",
+    mosque: "Мечеть",
+    synagogue: "Синагога",
+    temple: "Храм",
+    religious: "Религиозное здание",
+    school: "Школа",
+    university: "Университет",
+    college: "Колледж",
+    kindergarten: "Детский сад",
+    hospital: "Больница",
+    clinic: "Поликлиника",
+    doctors: "Медицинское учреждение",
+    gym: "Спортивный зал",
+    sports_hall: "Спортивный зал",
+    sports_centre: "Спортивный комплекс",
+    stadium: "Стадион",
+    swimming_pool: "Бассейн",
+    government: "Государственное учреждение",
+    public: "Общественное здание",
+    civic: "Общественное здание",
+    train_station: "Железнодорожный вокзал",
+    transportation: "Транспортное здание",
+    airport: "Аэровокзал",
+    terminal: "Терминал",
+    hangar: "Ангар",
+    military: "Военное строение",
+    bunker: "Бункер",
+    ruins: "Руины",
+    construction: "Строящееся здание",
+    roof: "Навес / кровля",
+    bridge: "Мост",
+    tower: "Башня",
+    water_tower: "Водонапорная башня",
+    lighthouse: "Маяк",
+    castle: "Замок",
+    fort: "Крепость",
+    museum: "Музей",
+    library: "Библиотека",
+    theatre: "Театр",
+    cinema: "Кинотеатр",
+    community_centre: "Общественный центр",
+    fire_station: "Пожарная часть",
+    police: "Полицейский участок",
+    post_office: "Почтовое отделение",
+    bank: "Банк",
+    service: "Сервисное здание",
+    utility: "Коммунальное строение",
+    transformer_tower: "Трансформаторная подстанция",
+    water_works: "Водонапорное сооружение",
+    sewage_treatment_plant: "Очистные сооружения",
+    silo: "Силос",
+    storage_tank: "Резервуар",
+    digester: "Биогазовый реактор",
+    slaughterhouse: "Бойня",
+    brewery: "Пивоварня",
+    bakery: "Пекарня",
+    data_center: "Дата-центр",
 };
+
+function formatBuildingType(value) {
+    const key = String(value || "").trim();
+    if (!key) return "Здание";
+    return BUILDING_TYPE_LABELS[key] || "Здание";
+}
+
+function aggregateBuildingTypes(data) {
+    const result = {};
+    Object.entries(data || {}).forEach(([key, count]) => {
+        const label = formatBuildingType(key);
+        result[label] = (result[label] || 0) + Number(count || 0);
+    });
+    return result;
+}
 
 let map = null;
 let currentBuilding = null;
@@ -23,7 +124,7 @@ let is3DEnabled = true;
 let isDistrictsVisible = true;
 let hoverPopup = null;
 let districtPopup = null;
-let allCatalogBuildings = [];
+let journalEntries = [];
 
 let isAreaDrawing = false;
 let areaDrawMode = null;
@@ -39,7 +140,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     initMap();
     initUIHandlers();
     await loadHeaderStats();
-    await loadCatalogBuildings();
 });
 
 function initMap() {
@@ -673,6 +773,7 @@ function startAreaDrawing(mode) {
     setAreaSelectionGeometry(null);
     document.getElementById("building-drawer").classList.add("hidden");
     document.getElementById("area-stats-panel").classList.add("hidden");
+    document.getElementById("cancel-area-btn").classList.remove("hidden");
     setAreaModeActive(mode);
     showAreaHint(
         mode === "rectangle"
@@ -694,6 +795,7 @@ function cancelAreaDrawing() {
     if (wasDrawing && map) map.easeTo({ pitch: areaPreviousPitch, duration: 300 });
     setAreaSelectionGeometry(null);
     hideAreaHint();
+    document.getElementById("cancel-area-btn").classList.add("hidden");
     setAreaModeActive(null);
 }
 
@@ -713,6 +815,7 @@ function finishAreaDrawing(geometry) {
     if (map) map.easeTo({ pitch: areaPreviousPitch, duration: 300 });
     setAreaSelectionGeometry(geometry);
     hideAreaHint();
+    document.getElementById("cancel-area-btn").classList.add("hidden");
     setAreaModeActive(null);
     runAreaImport(geometry);
 }
@@ -829,7 +932,7 @@ async function runAreaImport(geometry) {
         renderAreaStats(stats);
         await refreshGeoJSONSources();
         await loadHeaderStats();
-        await loadCatalogBuildings();
+        await loadJournalEntries();
     } catch (err) {
         console.error("Ошибка импорта выделенной области:", err);
         if (requestId === areaImportRequestId) {
@@ -883,15 +986,21 @@ function renderAreaKv(rows) {
         .join("");
 }
 
-function renderAreaStats(stats) {
+function renderAreaStats(stats, savedAt = null) {
     const counters = stats.import_stats || {};
     const scopeLabel = stats.data_scope === "full" ? "полные данные" : "частичные данные";
-    document.getElementById("area-stats-sub").textContent =
-        `${formatAreaKm2(stats.area_km2)} км² • ${scopeLabel}`;
+    const savedLabel = savedAt || stats.journal_created_at;
+    const subParts = [
+        `${formatAreaKm2(stats.area_km2)} км²`,
+        scopeLabel,
+    ];
+    if (savedLabel) subParts.push(`сохранено ${formatDateTime(savedLabel)}`);
+    document.getElementById("area-stats-sub").textContent = subParts.join(" • ");
 
     const warnings = (stats.warnings || [])
         .map((warning) => `<div class="area-warning">${escapeHtml(warning)}</div>`)
         .join("");
+    const typesByRussianLabel = aggregateBuildingTypes(stats.buildings_by_type);
 
     const body = document.getElementById("area-stats-body");
     body.innerHTML = `
@@ -928,8 +1037,9 @@ function renderAreaStats(stats) {
                 ["С организациями", formatNumber(stats.buildings_with_organizations)],
                 ["Без организаций", formatNumber(stats.buildings_without_organizations)],
             ])}
+            <div class="area-list-title">Типы зданий</div>
             <div class="area-list">
-                ${Object.entries(stats.buildings_by_type || {})
+                ${Object.entries(typesByRussianLabel)
                     .sort((a, b) => Number(b[1]) - Number(a[1]))
                     .map(
                         ([key, value]) =>
@@ -1048,8 +1158,9 @@ function renderBuildingDrawer(building, shouldFly = true) {
         });
     }
 
-    document.getElementById("b-type-badge").textContent =
-        BUILDING_TYPE_LABELS[building.building_type] || "Капитальное строение";
+    document.getElementById("b-type-badge").textContent = formatBuildingType(
+        building.building_type
+    );
     document.getElementById("b-city-badge").textContent = formatCityLabel(building.address_city);
     document.getElementById("b-title").textContent = building.name || building.full_address;
     document.getElementById("b-address").textContent = building.full_address;
@@ -1181,7 +1292,7 @@ function renderObjectPassport(b) {
     const bDl = document.getElementById("building-passport-dl");
     const rows = [
         ["Наименование", b.name || "—"],
-        ["Тип строения (OSM)", b.building_type || "—"],
+        ["Тип строения (OSM)", formatBuildingType(b.building_type)],
         ["OSM ID", b.osm_id || "—"],
         ["Область / Регион", b.address_region || "—"],
         ["Район", b.address_district || "—"],
@@ -1212,40 +1323,126 @@ async function loadHeaderStats() {
     }
 }
 
-async function loadCatalogBuildings(city = "") {
+async function loadJournalEntries() {
     try {
-        const url = city
-            ? `/api/v1/geojson/buildings?city=${encodeURIComponent(city)}`
-            : "/api/v1/geojson/buildings";
-        const resp = await fetch(url);
+        const resp = await fetch("/api/v1/areas/journal?limit=100");
         if (!resp.ok) return;
-        const fc = await resp.json();
-        allCatalogBuildings = fc.features || [];
-        renderCatalogList();
+        journalEntries = await resp.json();
+        renderJournalList();
     } catch (e) {
-        console.error("Ошибка загрузки реестра:", e);
+        console.error("Не удалось загрузить журнал областей:", e);
     }
 }
 
-function renderCatalogList() {
-    const listEl = document.getElementById("catalog-list");
+function renderJournalList() {
+    const listEl = document.getElementById("journal-list");
+    if (!listEl) return;
     listEl.innerHTML = "";
 
-    allCatalogBuildings.forEach((feat) => {
-        const p = feat.properties;
-        const card = document.createElement("div");
-        card.className = "catalog-card";
-        card.innerHTML = `
-            <div class="catalog-card-title">${escapeHtml(p.name)}</div>
-            <div class="catalog-card-meta">
-                <span>${escapeHtml(formatCityLabel(p.address_city))}</span>
-                <span style="color:#34d399; font-weight:600;">Орг.: ${p.org_count}</span>
+    if (!journalEntries.length) {
+        listEl.innerHTML = `
+            <div class="journal-empty">
+                Журнал пока пуст.<br/>
+                Выделите прямоугольник или полигон — статистика сохранится автоматически.
             </div>
         `;
-        card.onclick = () => {
-            selectBuildingById(p.id, true);
-        };
+        return;
+    }
+
+    journalEntries.forEach((entry) => {
+        const card = document.createElement("div");
+        card.className = "journal-card";
+        card.innerHTML = `
+            <div class="journal-card-title">${escapeHtml(formatDateTime(entry.created_at))}</div>
+            <div class="journal-card-meta">
+                <span>Площадь: <strong>${formatAreaKm2(entry.area_km2)} км²</strong></span>
+                <span>Зданий: <strong>${formatNumber(entry.buildings_total)}</strong></span>
+                <span>Орг.: <strong>${formatNumber(entry.organizations_total)}</strong></span>
+            </div>
+            <div class="journal-card-actions">
+                <button type="button" class="journal-delete-btn">Удалить</button>
+            </div>
+        `;
+        card.addEventListener("click", () => {
+            openJournalEntry(entry.id);
+        });
+        card.querySelector(".journal-delete-btn").addEventListener("click", async (event) => {
+            event.stopPropagation();
+            await deleteJournalEntry(entry.id);
+        });
         listEl.appendChild(card);
+    });
+}
+
+async function openJournalEntry(entryId) {
+    if (isAreaDrawing) cancelAreaDrawing();
+    try {
+        const resp = await fetch(`/api/v1/areas/journal/${entryId}`);
+        if (!resp.ok) return;
+        const entry = await resp.json();
+
+        document.getElementById("building-drawer").classList.add("hidden");
+        document.getElementById("cancel-area-btn").classList.add("hidden");
+        document.getElementById("area-stats-panel").classList.remove("hidden");
+        setAreaModeActive(null);
+        setAreaSelectionGeometry(entry.geometry);
+        fitAreaGeometry(entry.geometry);
+        renderAreaStats(entry.stats, entry.created_at);
+    } catch (e) {
+        console.error("Не удалось открыть запись журнала:", e);
+    }
+}
+
+async function deleteJournalEntry(entryId) {
+    if (!window.confirm("Удалить сохранённую область из журнала?")) return;
+    try {
+        const resp = await fetch(`/api/v1/areas/journal/${entryId}`, { method: "DELETE" });
+        if (!resp.ok) return;
+        await loadJournalEntries();
+    } catch (e) {
+        console.error("Не удалось удалить запись журнала:", e);
+    }
+}
+
+function flattenGeometryCoordinates(geometry, output = []) {
+    if (!geometry || !geometry.coordinates) return output;
+    if (geometry.type === "Polygon") {
+        geometry.coordinates.forEach((ring) => ring.forEach((point) => output.push(point)));
+    } else if (geometry.type === "MultiPolygon") {
+        geometry.coordinates.forEach((polygon) =>
+            polygon.forEach((ring) => ring.forEach((point) => output.push(point)))
+        );
+    } else if (geometry.type === "LineString") {
+        geometry.coordinates.forEach((point) => output.push(point));
+    }
+    return output;
+}
+
+function fitAreaGeometry(geometry) {
+    if (!map) return;
+    const coordinates = flattenGeometryCoordinates(geometry);
+    if (!coordinates.length) return;
+    const bounds = new maplibregl.LngLatBounds();
+    coordinates.forEach(([lon, lat]) => bounds.extend([lon, lat]));
+    if (bounds.isEmpty()) return;
+    map.fitBounds(bounds, {
+        padding: 80,
+        maxZoom: 17,
+        duration: 900,
+        pitch: 0,
+    });
+}
+
+function formatDateTime(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
     });
 }
 
@@ -1309,26 +1506,24 @@ function initUIHandlers() {
         }
     });
 
-    // Панель реестра объектов
-    const catalogPanel = document.getElementById("catalog-panel");
-    const btnCatalog = document.getElementById("toggle-catalog-btn");
-    btnCatalog.addEventListener("click", () => {
-        const isHidden = catalogPanel.classList.toggle("hidden");
-        btnCatalog.classList.toggle("active", !isHidden);
+    // Журнал сохранённых областей
+    const journalPanel = document.getElementById("journal-panel");
+    const btnJournal = document.getElementById("toggle-journal-btn");
+    btnJournal.addEventListener("click", async () => {
+        const isHidden = journalPanel.classList.toggle("hidden");
+        btnJournal.classList.toggle("active", !isHidden);
+        if (!isHidden) await loadJournalEntries();
     });
 
-    document.getElementById("close-catalog-btn").addEventListener("click", () => {
-        catalogPanel.classList.add("hidden");
-        btnCatalog.classList.remove("active");
-    });
-
-    document.getElementById("catalog-city-filter").addEventListener("change", (e) => {
-        loadCatalogBuildings(e.target.value);
+    document.getElementById("close-journal-btn").addEventListener("click", () => {
+        journalPanel.classList.add("hidden");
+        btnJournal.classList.remove("active");
     });
 
     // Выделение области и аналитика
     document.querySelectorAll("[data-area-mode]").forEach((btn) => {
         btn.addEventListener("click", () => {
+            if (isAreaDrawing) cancelAreaDrawing();
             startAreaDrawing(btn.dataset.areaMode);
         });
     });

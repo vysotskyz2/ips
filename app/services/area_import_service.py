@@ -5,6 +5,7 @@ import json
 import logging
 import math
 from collections import Counter
+from datetime import datetime, timezone
 from typing import Any
 
 from shapely import transform as shapely_transform
@@ -16,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import sync_postgis_geometries
+from app.models.area_journal import AreaJournalEntry
 from app.models.building import Building
 from app.models.organization import Organization
 from app.schemas.analytics import AreaImportCounters, AreaImportResponse
@@ -729,3 +731,55 @@ async def import_area_and_compute_stats(
         warnings,
         data_scope,
     )
+
+
+async def save_area_journal_entry(
+    session: AsyncSession,
+    geometry: dict[str, Any],
+    stats: AreaImportResponse,
+) -> AreaJournalEntry:
+    """Сохраняет выделенную область и её статистику в журнал для повторного просмотра."""
+    entry = AreaJournalEntry(
+        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        area_sqm=stats.area_sqm,
+        area_km2=stats.area_km2,
+        data_scope=stats.data_scope,
+        buildings_total=stats.buildings_total,
+        organizations_total=stats.organizations_total,
+        geometry_json=geometry,
+        stats_json=stats.model_dump(),
+    )
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
+async def list_area_journal_entries(
+    session: AsyncSession, limit: int = 50
+) -> list[AreaJournalEntry]:
+    stmt = (
+        select(AreaJournalEntry)
+        .order_by(AreaJournalEntry.id.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_area_journal_entry(
+    session: AsyncSession, entry_id: int
+) -> AreaJournalEntry | None:
+    result = await session.execute(
+        select(AreaJournalEntry).where(AreaJournalEntry.id == entry_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def delete_area_journal_entry(session: AsyncSession, entry_id: int) -> bool:
+    entry = await get_area_journal_entry(session, entry_id)
+    if entry is None:
+        return False
+    await session.delete(entry)
+    await session.commit()
+    return True
